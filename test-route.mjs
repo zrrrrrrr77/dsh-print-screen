@@ -15,7 +15,7 @@ apply({
 	webServer: { register: (route) => routes.set(route.path, route) },
 });
 
-const route = routes.get("/api/dsh-screenshot/capture");
+const route = routes.get("/api/dsh-print-screen/capture");
 assert.ok(route, "capture route registered");
 
 function fakeRequest(body) {

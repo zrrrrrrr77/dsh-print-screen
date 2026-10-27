@@ -14,12 +14,12 @@ const ctx = {
 	},
 };
 
-assert.equal(name, "dsh-screenshot");
+assert.equal(name, "dsh-print-screen");
 assert.deepEqual(inject, ["webServer"]);
 apply(ctx);
 
-const health = routes.get("/api/dsh-screenshot/health");
-const capture = routes.get("/api/dsh-screenshot/capture");
+const health = routes.get("/api/dsh-print-screen/health");
+const capture = routes.get("/api/dsh-print-screen/capture");
 assert.ok(health && capture, "routes registered");
 
 // health

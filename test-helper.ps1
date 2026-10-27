@@ -1,5 +1,5 @@
 ﻿param(
-  [string]$OutPath = "$env:TEMP\dsh-screenshot-helper-test.png"
+  [string]$OutPath = "$env:TEMP\dsh-print-screen-helper-test.png"
 )
 
 # 常驻助手的手动自测：

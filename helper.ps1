@@ -1,6 +1,6 @@
 ﻿param()
 
-# dsh-screenshot 常驻截图助手（唯一的截图实现）。
+# dsh-print-screen 常驻截图助手（唯一的截图实现）。
 #
 # 启动一次，之后常驻读 stdin；每次截图只做「隐藏 DSH → 抓屏 → 显示冻结窗口」。
 # 窗体、GDI 缓冲、画笔字体都只创建一次，跨请求复用。
@@ -33,6 +33,7 @@ public static class SnapDpi {
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool altTab);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 }
@@ -85,7 +86,7 @@ Add-Type -AssemblyName System.Drawing
 function Write-SnapLog {
   param([string]$Text)
   try {
-    $path = Join-Path $env:TEMP 'dsh-screenshot-helper.log'
+    $path = Join-Path $env:TEMP 'dsh-print-screen-helper.log'
     $info = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
     if ($info -ne $null -and $info.Length -gt 262144) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
     Add-Content -LiteralPath $path -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $Text) -Encoding UTF8
@@ -337,6 +338,8 @@ function Restore-TargetWindows {
     if ($handle -eq [IntPtr]::Zero) { continue }
     if ($entry.zoomed) { [SnapDpi]::ShowWindow($handle, 3) | Out-Null }
     else { [SnapDpi]::ShowWindow($handle, 5) | Out-Null }
+    # 提到 Z 序最前：否则窗口虽然显示了，仍可能被同屏幕的其它窗口压住
+    [SnapDpi]::SetWindowPos($handle, [IntPtr]::Zero, 0, 0, 0, 0, 0x0003) | Out-Null   # HWND_TOP | SWP_NOMOVE | SWP_NOSIZE
     $enableTransitions = 0
     try { [SnapDpi]::DwmSetWindowAttribute($handle, 3, [ref]$enableTransitions, 4) | Out-Null } catch { }
     $restored++
@@ -499,13 +502,25 @@ function Invoke-Capture {
       [System.Windows.Forms.Application]::DoEvents()
       Start-Sleep -Milliseconds 1
     }
+    # 先把 DSH 还原并抢回前台，再隐藏冻结窗口：
+    # 还原时冻结窗口还占着前台/焦点，系统才会允许我们把焦点交给 DSH，
+    # 否则 DSH 会显示在同屏幕其它窗口的下面。
+    if ($hidden.Count -gt 0) {
+      try {
+        $restored = Restore-TargetWindows -Hidden $hidden -Focus $focus
+        Write-SnapLog ("restore windows={0} focus={1}" -f $restored, $focus)
+        $result.hidden = @()
+      } catch {
+        Write-SnapLog ("restore error: " + $_.Exception.Message)
+      }
+    }
     $form.Hide()
 
     # 取消时可选地把整张冻结画面存下来，排查「DSH 有没有被截进去」。
     # 默认关闭：存 16MB PNG 要 ~200ms，会拖慢取消的响应。
     if (-not $script:snap.saved -and $hidden.Count -gt 0 -and $env:DSH_SCREENSHOT_FRAME_DUMP -eq '1') {
       try {
-        $dump = Join-Path $env:TEMP 'dsh-screenshot-last-frame.png'
+        $dump = Join-Path $env:TEMP 'dsh-print-screen-last-frame.png'
         $script:snap.bitmap.Save($dump, [System.Drawing.Imaging.ImageFormat]::Png)
         Write-SnapLog ("frame dumped: " + $dump)
       } catch {
@@ -524,7 +539,7 @@ function Invoke-Capture {
 
 $stdin = [Console]::In
 $stdout = [Console]::Out
-Write-SnapLog 'helper ready v0.3.1 (hide settle 30ms, DWM transitions off, foreground restore)'
+Write-SnapLog 'helper ready v0.3.2 (hide settle 30ms, restore before overlay hides)'
 $stdout.WriteLine('ready')
 $stdout.Flush()
 

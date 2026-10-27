@@ -1,10 +1,10 @@
 /**
- * dsh-screenshot —— 宿主半边
+ * dsh-print-screen —— 宿主半边
  *
  * 给输入框的「截图」按钮弹一次微信式截图：
- *   POST /api/dsh-screenshot/capture   { hide?: boolean, delayMs?: number }
+ *   POST /api/dsh-print-screen/capture   { hide?: boolean, delayMs?: number }
  *     → 裁剪后的 image/png；用户取消 → 204
- *   GET  /api/dsh-screenshot/health    → 自检（含常驻助手状态）
+ *   GET  /api/dsh-print-screen/health    → 自检（含常驻助手状态）
  *
  * 只有一套截图实现：常驻助手 helper.ps1 —— 只启动一次、常驻读 stdin，
  * 加载 WinForms / P-Invoke / 窗体 / GDI 缓冲都只做一次。之后每次截图只花
@@ -20,10 +20,10 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 
-export const name = "dsh-screenshot";
+export const name = "dsh-print-screen";
 export const inject = ["webServer"];
 
-const API_BASE = "/api/dsh-screenshot";
+const API_BASE = "/api/dsh-print-screen";
 const HELPER_SCRIPT = fileURLToPath(new URL("./helper.ps1", import.meta.url));
 const HELPER_READY_TIMEOUT_MS = 10_000;
 const HELPER_REQUEST_TIMEOUT_MS = 300_000;
@@ -241,7 +241,7 @@ async function helperCapture({ hide, delayMs, outPath, selfTest = false }) {
 async function capture({ hide = true, delayMs = 30, selfTest = false } = {}, logger) {
 	if (process.platform !== "win32") throw new Error("截图目前只支持 Windows");
 	const delay = Math.max(0, Math.min(2000, Number(delayMs) || 0));
-	const dir = await mkdtemp(join(tmpdir(), "dsh-screenshot-"));
+	const dir = await mkdtemp(join(tmpdir(), "dsh-print-screen-"));
 	const file = join(dir, `${randomUUID()}.png`);
 	try {
 		let lastError;
@@ -288,7 +288,7 @@ export function apply(ctx) {
 		timer.unref?.();
 	}
 
-	ctx.effect?.(() => () => stopHelper(), "dsh-screenshot helper");
+	ctx.effect?.(() => () => stopHelper(), "dsh-print-screen helper");
 
 	ctx.webServer.register({
 		kind: "exact",

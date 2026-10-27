@@ -1,6 +1,6 @@
 {
-  "name": "dsh-screenshot",
-  "version": "0.3.1",
+  "name": "dsh-print-screen",
+  "version": "0.3.2",
   "description": "Freezes the whole desktop from a scissors button in the DSH composer, crops a dragged region, and inserts it into the prompt as an image attachment. Windows only.",
   "type": "module",
   "main": "index.js",
@@ -35,14 +35,14 @@
     "win32"
   ],
   "license": "MIT",
-  "author": "zrrrrrr77",
-  "homepage": "https://github.com/zrrrrrr77/dsh-screenshot#readme",
+  "author": "zrrrrrrr77",
+  "homepage": "https://github.com/zrrrrrrr77/ZR7#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zrrrrrr77/dsh-screenshot.git"
+    "url": "git+https://github.com/zrrrrrrr77/ZR7.git"
   },
   "bugs": {
-    "url": "https://github.com/zrrrrrr77/dsh-screenshot/issues"
+    "url": "https://github.com/zrrrrrrr77/ZR7/issues"
   },
   "dsh": {
     "bundle": {

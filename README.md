@@ -1,8 +1,8 @@
-# Print Screen
+# dsh-Print Screen
 
 [English](#english) | 中文
 
-`dsh-screenshot` 给 DSH 桌面版的输入框加一个剪刀按钮：点一下把整个虚拟桌面（所有显示器）按原位置、原像素冻结，在画面上拖一个矩形，松手后把该区域作为图片附件插入当前提示词框，同时另存一份 PNG 到会话目录。仅 Windows。
+`dsh-print-screen` 给 DSH 桌面版的输入框加一个剪刀按钮：点一下把整个虚拟桌面（所有显示器）按原位置、原像素冻结，在画面上拖一个矩形，松手后把该区域作为图片附件插入当前提示词框，同时另存一份 PNG 到会话目录。仅 Windows。
 
 ```text
 输入框左下角：  [+]  [✂]  [工作区内修改]  [计划]
@@ -58,15 +58,13 @@
 
 ## 安装
 
-在 DSH 里打开 **插件 → 发现**，搜 `dsh-screenshot` 安装；或者用命令行：
+目前**没有发布到 npm**，直接用 GitHub 源码安装：
 
 ```sh
-# npm 包（推荐，装完刷新页面即可，多数情况不用重启）
-dsh plugin --profile web add dsh-screenshot
-
-# 直接从 GitHub 源码装（没发 npm 时）
-dsh plugin --profile web add github:zrrrrrr77/dsh-screenshot
+dsh plugin --profile web add github:zrrrrrrr77/ZR7
 ```
+
+也可以在 DSH 里打开 **插件 → 发现**，用插件市场安装（市场条目见仓库）。
 
 装完在输入框左侧、「工作区内修改」左边就能看到剪刀；看不到就刷新页面，必要时完全退出 DSH 再打开（宿主半边要重启才加载）。
 
@@ -123,14 +121,14 @@ MIT
 
 ## English
 
-`dsh-screenshot` adds one scissors button to the DSH composer. Clicking it freezes the whole virtual desktop (all monitors, at their original position and pixel size); drag a rectangle on the frozen screen and the crop is inserted into the prompt as an image attachment, plus saved as a PNG into the session folder. Windows only.
+`dsh-print-screen` adds one scissors button to the DSH composer. Clicking it freezes the whole virtual desktop (all monitors, at their original position and pixel size); drag a rectangle on the frozen screen and the crop is inserted into the prompt as an image attachment, plus saved as a PNG into the session folder. Windows only.
 
 - **Windows only.** The host process has no Electron `desktopCapturer`, so the freeze-and-drag overlay is a `powershell.exe` + WinForms window shipped in this package. It declares Per-Monitor V2 DPI awareness so the frozen image is 1:1 with the screen instead of being scaled up.
 - **One transparent scissors button** next to the composer's `+`, left of the permission chip.
 - **Hiding DSH**: the window is hidden for the shot by default and restored right after the crop; hold `Shift` (or press `Ctrl+Shift+Alt+1`) to keep it visible, or press `Ctrl+Alt+1` for the default behavior.
 
 ```sh
-dsh plugin --profile web add dsh-screenshot
+dsh plugin --profile web add github:zrrrrrrr77/ZR7
 ```
 
 Requires `dsh >= 0.2.1-rc.3`. Screenshots never leave the machine; the plugin makes no network requests. Insertion reuses DSH's own attachment pipeline (`conversation.createDrafts` + `inputActions.addAttachments`), falling back to a synthetic Lexical `paste` event and finally the clipboard.

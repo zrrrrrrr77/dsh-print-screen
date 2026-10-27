@@ -69,14 +69,14 @@ vm.createContext(context);
 vm.runInContext(source, context, { filename: "client.js" });
 
 assert.ok(definition, "module loader received a definition");
-assert.equal(definition.id, "dsh-screenshot");
+assert.equal(definition.id, "dsh-print-screen");
 
 const exports = definition.factory((name) => {
 	if (name === "react") return React;
 	throw new Error(`unexpected require: ${name}`);
 });
 
-assert.equal(exports.name, "dsh-screenshot");
+assert.equal(exports.name, "dsh-print-screen");
 assert.equal(JSON.stringify(exports.inject), JSON.stringify(["slots"]));
 assert.equal(typeof exports.apply, "function");
 

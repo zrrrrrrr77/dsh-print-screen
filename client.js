@@ -1,5 +1,5 @@
 /**
- * dsh-screenshot —— 浏览器半
+ * dsh-print-screen —— 浏览器半
  *
  * 输入框左边一个剪刀按钮（和最初那个相机按钮一样：透明背景、只有图标）：
  *   单击              → 截屏（默认先隐藏 DSH 窗口，截完立即还原）
@@ -12,7 +12,7 @@
  */
 
 window.__ModuleLoader__.load({
-	id: 'dsh-screenshot',
+	id: 'dsh-print-screen',
 	factory: (require) => {
 		var module = { exports: {} }
 		var exports = module.exports
@@ -20,8 +20,8 @@ window.__ModuleLoader__.load({
 
 		const React = require('react')
 
-		const ENDPOINT = '/api/dsh-screenshot/capture'
-		const STYLE_ID = 'dsh-screenshot/style'
+		const ENDPOINT = '/api/dsh-print-screen/capture'
+		const STYLE_ID = 'dsh-print-screen/style'
 
 		/** apply() 里的 ctx，组件里要用它去拿 conversation 服务。 */
 		let pluginCtx
@@ -414,7 +414,7 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 			})
 		}
 
-		exports.name = 'dsh-screenshot'
+		exports.name = 'dsh-print-screen'
 		exports.inject = inject
 		exports.apply = apply
 		exports.__test = { shortcutIntent, timestampName }
