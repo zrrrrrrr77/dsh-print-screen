@@ -1,8 +1,8 @@
-# dsh-screenshot
+# Print Screen
 
 [English](#english) | 中文
 
-给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）桌面版用的**微信式截图**插件：输入框左边一个剪刀按钮，点一下整个桌面立刻冻结，直接在屏幕上拉框，松手就把那一块**插进当前提示词框**。
+`dsh-screenshot` 给 DSH 桌面版的输入框加一个剪刀按钮：点一下把整个虚拟桌面（所有显示器）按原位置、原像素冻结，在画面上拖一个矩形，松手后把该区域作为图片附件插入当前提示词框，同时另存一份 PNG 到会话目录。仅 Windows。
 
 ```text
 输入框左下角：  [+]  [✂]  [工作区内修改]  [计划]
@@ -13,8 +13,8 @@
 ## 功能
 
 - **一个剪刀按钮**：和普通的输入框按钮一样——透明背景、只有图标，不占额外宽度。
-- **冻结屏幕再拉框**：整块虚拟桌面（所有显示器）冻结，每张画面**保持原位、保持原始像素大小**，和微信/QQ 截图一致；松手即裁剪并插入。
-- **默认隐藏 DSH**：截图前先把 DSH 窗口最小化，截完自动还原（最大化状态也还原），所以能截到被它挡住的窗口。
+- **冻结屏幕再拉框**：整块虚拟桌面（所有显示器）冻结，每张画面**保持原位、保持原始像素大小**；松手即裁剪并插入。
+- **默认隐藏 DSH**：截图前先隐藏 DSH 窗口，截完立即还原（最大化状态也还原），因此能截到被它挡住的窗口。
 - **不隐藏的两种方式**：按住 `Shift` 点剪刀，或按 `Ctrl+Shift+Alt+1`。
 - **插入提示词框**：走会话自己的附件 API，缩略图出现在输入框下方，回车随消息发出；失败时退回合成粘贴事件，再不行就复制到剪贴板并提示 `Ctrl+V`。
 - **文件名带时间戳**：附件名是 `screenshot-2026-10-26_22-31-05.png`（本地时间，精确到秒），多张截图不会重名。
@@ -123,11 +123,11 @@ MIT
 
 ## English
 
-A WeChat-style screen snip for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) composer: one click on the scissors freezes the whole desktop — every screen stays exactly where it is, at its original pixel size — you drag a region right on the frozen screen, and the crop is inserted into the prompt box as an image attachment.
+`dsh-screenshot` adds one scissors button to the DSH composer. Clicking it freezes the whole virtual desktop (all monitors, at their original position and pixel size); drag a rectangle on the frozen screen and the crop is inserted into the prompt as an image attachment, plus saved as a PNG into the session folder. Windows only.
 
 - **Windows only.** The host process has no Electron `desktopCapturer`, so the freeze-and-drag overlay is a `powershell.exe` + WinForms window shipped in this package. It declares Per-Monitor V2 DPI awareness so the frozen image is 1:1 with the screen instead of being scaled up.
 - **One transparent scissors button** next to the composer's `+`, left of the permission chip.
-- **Hiding DSH**: the window is minimized for the shot by default and restored afterwards; hold `Shift` (or press `Ctrl+Shift+Alt+1`) to keep it visible, or press `Ctrl+Alt+1` for the default behavior.
+- **Hiding DSH**: the window is hidden for the shot by default and restored right after the crop; hold `Shift` (or press `Ctrl+Shift+Alt+1`) to keep it visible, or press `Ctrl+Alt+1` for the default behavior.
 
 ```sh
 dsh plugin --profile web add dsh-screenshot

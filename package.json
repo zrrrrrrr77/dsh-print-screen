@@ -1,7 +1,7 @@
 {
   "name": "dsh-screenshot",
   "version": "0.3.1",
-  "description": "WeChat-style screen snip for the DSH composer: click the scissors, freeze the screen, drag a region, and the crop lands in your prompt.",
+  "description": "Freezes the whole desktop from a scissors button in the DSH composer, crops a dragged region, and inserts it into the prompt as an image attachment. Windows only.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -25,7 +25,6 @@
     "deepseek-harness",
     "screenshot",
     "snip",
-    "wechat",
     "composer",
     "windows"
   ],
