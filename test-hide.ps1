@@ -17,6 +17,7 @@ public static class HideProbe4 {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder sb, int max);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
   public static List<IntPtr> VisibleOf(uint target) {
@@ -40,8 +41,8 @@ public static class HideProbe4 {
     return found;
   }
   public static string TitleOf(IntPtr h) {
-    var t = new StringBuilder(512); GetWindowText(h, t, 512); return t.ToString();
-  }
+    var t = new StringBuilder(512); GetWindowText(h, t, 512); return t.ToString();  }
+  public static int ExStyleOf(IntPtr h) { return GetWindowLong(h, -20); }
   public static IntPtr Point(int x, int y) { return (IntPtr)((y << 16) | (x & 0xFFFF)); }
 }
 "@
@@ -87,14 +88,23 @@ $helper.StandardInput.Flush()
 
 $form = [IntPtr]::Zero
 $sw = [Diagnostics.Stopwatch]::StartNew()
+$layeredSeen = $false
 while ($sw.ElapsedMilliseconds -lt 8000) {
+  if (-not $layeredSeen) {
+    foreach ($h in @([HideProbe4]::VisibleOf([uint32]$fake.Id))) {
+      if (([HideProbe4]::ExStyleOf($h) -band 0x80000) -ne 0) { $layeredSeen = $true }
+    }
+  }
   $form = [HideProbe4]::FormOf([uint32]$helper.Id)
   if ($form -ne [IntPtr]::Zero) { break }
   Start-Sleep -Milliseconds 25
 }
 $visibleDuring = @([HideProbe4]::VisibleOf([uint32]$fake.Id)).Count
-"overlay after $($sw.ElapsedMilliseconds)ms; stand-in visible during overlay: $visibleDuring"
-if ($visibleDuring -ne 0) { "隐藏失败" } else { "隐藏成功" }
+"overlay after $($sw.ElapsedMilliseconds)ms; stand-in visible during overlay: $visibleDuring; 透明层出现过: $layeredSeen"
+# 新方案：窗口不隐藏，改成全透明（WS_EX_LAYERED + alpha 0），所以“可见”要恒为 1，
+# 并且过程中必须出现过分层样式。
+if ($layeredSeen) { "透明隐藏生效" } else { "透明隐藏失败" }
+if ($visibleDuring -ne 1) { "窗口被真的隐藏了（不应发生）" }
 
 if ($form -ne [IntPtr]::Zero) {
   [HideProbe4]::PostMessage($form, 0x0201, [IntPtr]::Zero, [HideProbe4]::Point(10, 10)) | Out-Null

@@ -263,10 +263,10 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 				if (result === null) return
 				const file = new File([result.blob], fileName, { type: 'image/png' })
 				const outcome = await insertImage(file, sessionId, inputActions ?? mount?.inputActions)
-				const saved = result.savedPath === undefined ? '' : ' · 已存到会话文件夹'
-				if (outcome === 'attached' || outcome === 'pasted') toast(`已插入到输入框${saved}`)
-				else if (outcome === 'clipboard') toast(`已复制到剪贴板，按 Ctrl+V 粘贴${saved}`)
-				else toast('没能插入输入框，截图也没有复制成功', 'error')
+				const saved = result.savedPath === undefined ? '' : '（已存到会话文件夹）'
+				// 成功插入时不打扰用户，不弹提示；只有需要用户动手或失败才提示
+				if (outcome === 'clipboard') toast(`已复制到剪贴板，按 Ctrl+V 粘贴${saved}`)
+				else if (outcome === 'failed') toast('没能插入输入框，截图也没有复制成功', 'error')
 			} catch (error) {
 				toast(error?.message ?? String(error), 'error')
 			} finally {

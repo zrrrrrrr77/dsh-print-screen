@@ -61,7 +61,7 @@
 目前**没有发布到 npm**，直接用 GitHub 源码安装：
 
 ```sh
-dsh plugin --profile web add github:zrrrrrrr77/ZR7
+dsh plugin --profile web add github:zrrrrrrr77/dsh-print-screen
 ```
 
 也可以在 DSH 里打开 **插件 → 发现**，用插件市场安装（市场条目见仓库）。
@@ -128,7 +128,7 @@ MIT
 - **Hiding DSH**: the window is hidden for the shot by default and restored right after the crop; hold `Shift` (or press `Ctrl+Shift+Alt+1`) to keep it visible, or press `Ctrl+Alt+1` for the default behavior.
 
 ```sh
-dsh plugin --profile web add github:zrrrrrrr77/ZR7
+dsh plugin --profile web add github:zrrrrrrr77/dsh-print-screen
 ```
 
 Requires `dsh >= 0.2.1-rc.3`. Screenshots never leave the machine; the plugin makes no network requests. Insertion reuses DSH's own attachment pipeline (`conversation.createDrafts` + `inputActions.addAttachments`), falling back to a synthetic Lexical `paste` event and finally the clipboard.
