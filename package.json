@@ -1,0 +1,56 @@
+{
+  "name": "dsh-screenshot",
+  "version": "0.3.1",
+  "description": "WeChat-style screen snip for the DSH composer: click the scissors, freeze the screen, drag a region, and the crop lands in your prompt.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "helper.ps1",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "dsh-bundle",
+    "deepseek-harness",
+    "screenshot",
+    "snip",
+    "wechat",
+    "composer",
+    "windows"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.3"
+  },
+  "os": [
+    "win32"
+  ],
+  "license": "MIT",
+  "author": "zrrrrrr77",
+  "homepage": "https://github.com/zrrrrrr77/dsh-screenshot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zrrrrrr77/dsh-screenshot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zrrrrrr77/dsh-screenshot/issues"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

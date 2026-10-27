@@ -1,0 +1,8 @@
+# dsh-screenshot bundle patch.
+#
+# 这个包被某个 profile 选为组合包（package.json 的 dsh.profile.bundles）时，
+# 下面这一行会被插入该 profile 的 loader —— 这就是 `dsh plugin add dsh-screenshot`
+# 装完之后插件自动生效的原因。
+- insert:
+    - id: screenshot
+      name: dsh-screenshot
