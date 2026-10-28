@@ -1,4 +1,4 @@
-﻿param()
+param()
 
 # dsh-print-screen 常驻截图助手（唯一的截图实现）。
 #
@@ -477,7 +477,8 @@ function Invoke-Capture {
       }
     }
     if ($hidden.Count -gt 0) {
-      $detail = ($hidden | ForEach-Object { "{0}[alpha={1},fallback={2}]" -f $_.title, $_.ret, $_.fallback }) -join ' || '
+      # 只记标题长度，不记标题本身：标题常含会话名、文件名、网页标题，属于隐私
+      $detail = ($hidden | ForEach-Object { "len={0}[alpha={1},fallback={2}]" -f $_.title.Length, $_.ret, $_.fallback }) -join ' || '
       Write-SnapLog ("hide {0}: {1}" -f $hidden.Count, $detail)
       # 过渡动画关不掉时退回长一点的等待，避免抓到渐隐残影
       $settle = 60
@@ -614,7 +615,7 @@ while ($true) {
     $stdout.Flush()
     if ($result.focus -ne [IntPtr]::Zero) {
       $foreground = Get-ForegroundTitle
-      Write-SnapLog ("after close fg='{0}'" -f $foreground)
+      Write-SnapLog ("after close fg len={0}" -f ([string]$foreground).Length)
     }
   } catch {
     $message = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($_.Exception.Message))

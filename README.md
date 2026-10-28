@@ -93,6 +93,9 @@ dsh plugin --profile web add github:zrrrrrrr77/dsh-print-screen
 - 截图**只在本机流转**：宿主进程调用 `powershell.exe` 起一个 WinForms 全屏窗口，画面只在内存里；选完的裁剪结果交给 DSH 附件库保存，临时目录里的中转文件读回浏览器后立即删除。插件没有网络请求。
 - 插件会以你的用户权限执行 `powershell.exe -File helper.ps1 -ExecutionPolicy Bypass`（脚本随包发布，可自行审查）；它只隐藏/还原**进程名或窗口标题匹配 DSH** 的窗口，不会碰别的程序。
 - 插入图片复用 DSH 自己的附件通道，图片和普通粘贴的图片走同一条上传/落盘路径。
+- **本地留痕只有三处**：附件库里的图片本体；会话目录的 `screenshots.json`（文件名、哈希、尺寸、会话标题——用来回答“这张图属于哪个对话”）；`%TEMP%\dsh-print-screen-helper.log`（只记耗时、隐藏窗口数量和**标题长度**，不记标题内容）。
+- **诊断开关默认关闭**：只有设置环境变量 `DSH_SCREENSHOT_FRAME_DUMP=1` 后，在**取消**截图时才会把整块冻结画面存到 `%TEMP%\dsh-print-screen-last-frame.png`，用于排查“DSH 有没有被截进去”。
+- **截图会离开本机**：图片作为消息附件发送时，会随对话内容一起发给模型服务商。那是 DSH 本身的行为，不是这个插件联网。
 
 ## 自测
 

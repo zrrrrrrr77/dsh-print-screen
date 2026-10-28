@@ -1,6 +1,6 @@
 {
   "name": "dsh-print-screen",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Freezes the whole desktop from a scissors button in the DSH composer, crops a dragged region, and inserts it into the prompt as an image attachment. The shot is stored once in the DSH attachment library, indexed per session. Windows only.",
   "type": "module",
   "main": "index.js",

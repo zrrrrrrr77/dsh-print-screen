@@ -93,6 +93,9 @@ After installing, the scissors sits at the left of the composer, just before "wo
 - Screenshots **stay on this machine**: the host runs `powershell.exe` with a full-screen WinForms window and the image lives in memory; the chosen crop is handed to the DSH attachment library, and the temporary file used for transfer is deleted as soon as the browser has read it. The plugin makes no network requests.
 - The plugin runs `powershell.exe -File helper.ps1 -ExecutionPolicy Bypass` with your user privileges (the script ships in the package and can be reviewed). It only hides and restores windows whose process name or title matches DSH; nothing else is touched.
 - Insertion reuses DSH's own attachment path, so a shot travels exactly the same upload and save route as a pasted image.
+- **Only three local traces exist**: the image object in the attachment library; `screenshots.json` in the session directory (filename, hash, size, session title — it answers "which conversation owns this shot"); and `%TEMP%\dsh-print-screen-helper.log`, which records timings, the number of hidden windows and **title lengths only** — never the titles themselves.
+- **The diagnostic dump is off by default.** Only with `DSH_SCREENSHOT_FRAME_DUMP=1` set does a *cancelled* capture write the whole frozen frame to `%TEMP%\dsh-print-screen-last-frame.png`, to check whether DSH ended up in the picture.
+- **A sent screenshot does leave the machine**: as a message attachment it goes to the model provider along with the conversation. That is DSH's own behaviour, not a network call made by this plugin.
 
 ## Self-test
 
