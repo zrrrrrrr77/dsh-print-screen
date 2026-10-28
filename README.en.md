@@ -2,13 +2,15 @@
 
 [中文](README.md) | English
 
-`dsh-print-screen` adds one scissors button to the DSH composer. Click it and the whole virtual desktop (every monitor) freezes at its original position and pixel size; drag a rectangle on that frozen image, release, and the crop is inserted into the prompt as an image attachment while a PNG copy is written into the session folder. Windows only.
+`dsh-print-screen` adds one scissors button to the DSH composer. Click it and the whole virtual desktop (every monitor) freezes at its original position and pixel size; drag a rectangle on that frozen image, release, and the crop is inserted into the prompt as an image attachment. The shot is stored once, in the DSH attachment library under a content hash, and is not copied into the workspace. Windows only.
 
 ```text
 composer, bottom left:  [+]  [✂]  [workspace edits]  [Plan]
                            │
                            └─ click ✂ → screen freezes (same place, same size) → drag → release → thumbnail lands in the composer
 ```
+
+![The scissors button at the left of the composer](scissors-button.png)
 
 ## Features
 
@@ -18,7 +20,9 @@ composer, bottom left:  [+]  [✂]  [workspace edits]  [Plan]
 - **Two ways to keep it visible.** Hold `Shift` while clicking, or press `Ctrl+Shift+Alt+1`.
 - **Inserted into the composer.** The shot goes through the session's own attachment API, so the thumbnail appears under the input and is sent with the message on Enter. If that fails it falls back to a synthetic paste event, and finally to the clipboard with a `Ctrl+V` hint.
 - **Timestamped filenames.** Attachments are named `screenshot-2026-10-26_22-31-05.png` (local time, second precision), so several shots never collide.
-- **A copy in the session folder.** Each shot is also saved into the current session working directory (`session.cwd`; with dsh-session-folder that is the session's own folder). Same-second repeats get `-1`, `-2`. An unwritable directory is skipped silently and does not affect insertion.
+- **One copy, no duplication.** The image is stored once in the DSH attachment library (`~/.dsh/attachments`), named by its content hash; no copy is written into the workspace, and uploading the same image twice still stores only one object.
+- **Indexed per session.** After each shot the host appends `{time, filename, hash, size, session id/title, object path}` to `screenshots.json` in the session directory, which answers "which conversation does this image belong to". Failing to write it never affects the shot.
+- **Optional extra backup.** Set `SAVE_TO_SESSION` to `true` in `client.js` to also write a same-named PNG into the session folder (costs double the disk per shot).
 
 ## Controls
 
@@ -28,7 +32,7 @@ composer, bottom left:  [+]  [✂]  [workspace edits]  [Plan]
 | `Shift` + click | Capture without hiding DSH (it can be in the shot) |
 | `Ctrl+Alt+1` | Same as a click: capture with DSH hidden |
 | `Ctrl+Shift+Alt+1` | Capture with DSH visible |
-| Drag a rectangle, release | Crop, save a copy in the session folder, insert into the composer (DSH is restored as soon as the crop returns) |
+| Drag a rectangle, release | Crop, insert into the composer, and append a line to `screenshots.json` (DSH is restored as soon as the crop returns) |
 | `Esc` / right-click | Cancel |
 
 > Hotkeys match physical keys (`event.code`), so they also fire on layouts where `Shift+1` produces `!`; `!` itself is not handled.
@@ -86,7 +90,7 @@ After installing, the scissors sits at the left of the composer, just before "wo
 
 ## Privacy and security
 
-- Screenshots **stay on this machine**: the host runs `powershell.exe` with a full-screen WinForms window and the image lives in memory; the chosen crop **keeps one copy in the session folder**, and the temporary file used for transfer is deleted as soon as the browser has read it. The plugin makes no network requests.
+- Screenshots **stay on this machine**: the host runs `powershell.exe` with a full-screen WinForms window and the image lives in memory; the chosen crop is handed to the DSH attachment library, and the temporary file used for transfer is deleted as soon as the browser has read it. The plugin makes no network requests.
 - The plugin runs `powershell.exe -File helper.ps1 -ExecutionPolicy Bypass` with your user privileges (the script ships in the package and can be reviewed). It only hides and restores windows whose process name or title matches DSH; nothing else is touched.
 - Insertion reuses DSH's own attachment path, so a shot travels exactly the same upload and save route as a pasted image.
 
@@ -112,6 +116,7 @@ The helper protocol has a self-test mode (sixth field `1`: no window, fixed 320x
 - Windows only.
 - The freeze overlay is an ordinary top-most window, so in theory another top-most window can cover a corner of it.
 - DSH is hidden while you capture; if the helper ever hangs (it is killed after a 5-minute timeout), DSH has to be restored by hand.
+- **Never delete images from the attachment library by hand.** Messages reference them by hash, so removing an object makes the sessions that reference it fail and their images disappear. Use the "Delete Conversation" plugin so images are removed together with the conversation.
 
 ## License
 

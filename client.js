@@ -99,7 +99,7 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 			}
 		}
 
-		async function requestCapture(hide, fileName, saveDir) {
+		async function requestCapture(hide, fileName, saveDir, sessionId) {
 			// 助手卡住时不要让按钮一直转：120 秒后主动放弃
 			const controller = new AbortController()
 			const timer = setTimeout(() => controller.abort(), 120_000)
@@ -107,7 +107,7 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 				const response = await fetch(ENDPOINT, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ hide: hide !== false, fileName, saveDir }),
+					body: JSON.stringify({ hide: hide !== false, fileName, saveDir, sessionId }),
 					signal: controller.signal,
 				})
 				if (response.status === 204) return null
@@ -248,6 +248,14 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 			return `screenshot-${stamp}.png`
 		}
 
+		/**
+		 * 是否额外把截图另存一份到会话目录。
+		 *   false（默认）—— 只留在 DSH 附件库：消息里能引用，不额外占磁盘
+		 *   true         —— 附件库 + 会话目录各一份：方便用编辑器/脚本直接读文件
+		 * 想改成两份就把这里改成 true（只改前端，刷新页面即可）。
+		 */
+		const SAVE_TO_SESSION = false
+
 		/** 同一时间只允许一次截图（按钮和快捷键共用一个闸门，避免连按弹出多个冻结窗口）。 */
 		let capturing = false
 
@@ -259,7 +267,12 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 			if (typeof setBusy === 'function') setBusy(true)
 			try {
 				const fileName = timestampName()
-				const result = await requestCapture(hide, fileName, sessionCwd(sessionId))
+				const result = await requestCapture(
+					hide,
+					fileName,
+					SAVE_TO_SESSION ? sessionCwd(sessionId) : undefined,
+					sessionId,
+				)
 				if (result === null) return
 				const file = new File([result.blob], fileName, { type: 'image/png' })
 				const outcome = await insertImage(file, sessionId, inputActions ?? mount?.inputActions)
@@ -332,7 +345,7 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 					ref: holder,
 					type: 'button',
 					className: 'dshs-btn',
-					title: '截图（Shift+点击不隐藏 DSH 窗口 · Ctrl+Alt+1）',
+					title: '截图（Ctrl+Alt+1 · +shift不隐藏窗口）',
 					'aria-label': '截图',
 					'data-busy': busy ? 'true' : 'false',
 					disabled: busy,

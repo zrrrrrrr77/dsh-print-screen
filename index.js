@@ -14,14 +14,14 @@
  */
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 
 export const name = "dsh-print-screen";
-export const inject = ["webServer"];
+export const inject = ["webServer", "workingDirectory"];
 
 const API_BASE = "/api/dsh-print-screen";
 const HELPER_SCRIPT = fileURLToPath(new URL("./helper.ps1", import.meta.url));
@@ -98,6 +98,64 @@ async function saveToSession(buffer, dir, fileName) {
 		}
 	}
 	return undefined;
+}
+
+/**
+ * 会话当前目录：和 dsh-session-folder 同一口径，读宿主 workingDirectory 的投影。
+ * 会话 header.cwd 是不可变的工作区根，只有投影反映“当前真正在用的目录”。
+ * 取不到返回 undefined，由前端传来的 saveDir 兜底。
+ */
+function resolveSessionDir(ctx, sessionId) {
+	if (typeof sessionId !== "string" || sessionId === "") return undefined;
+	try {
+		const sessions = ctx.get?.("sessions");
+		const session = sessions?.get?.(sessionId);
+		if (session === undefined || session === null) return undefined;
+		const dir = ctx.workingDirectory?.get?.(session);
+		return typeof dir === "string" && dir !== "" ? dir : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** 内容哈希：附件库按它命名，索引里记它就能反查文件。 */
+function sha256Hex(buffer) {
+	return createHash("sha256").update(buffer).digest("hex");
+}
+
+/** 会话标题（取不到就算了，索引里这一项为 null）。 */
+function resolveSessionTitle(ctx, sessionId) {
+	try {
+		const session = ctx.get?.("sessions")?.get?.(sessionId);
+		if (session === undefined || session === null) return undefined;
+		const title = ctx.get?.("sessionTitle")?.get?.(session);
+		return typeof title?.title === "string" ? title.title : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * 把一条截图记录追加到 <会话目录>\screenshots.json。
+ * 图片本体只存在于附件库（内容寻址、无扩展名），这个文件只记“谁拍的、什么时候、哈希是什么”，
+ * 用来回答“这张图是哪个对话的”。任何失败都静默忽略，不影响截图本身。
+ */
+async function appendShotIndex(dir, entry) {
+	if (typeof dir !== "string" || dir === "") return;
+	try {
+		const file = join(dir, "screenshots.json");
+		let list = [];
+		try {
+			const parsed = JSON.parse(await readFile(file, "utf8"));
+			if (Array.isArray(parsed)) list = parsed;
+		} catch {
+			/* 首次或文件损坏：重建 */
+		}
+		list.push(entry);
+		await writeFile(file, `${JSON.stringify(list, null, 2)}\n`, "utf8");
+	} catch {
+		/* 记账失败不影响截图 */
+	}
 }
 
 // ------------------------------------------------------------ 常驻助手
@@ -341,8 +399,22 @@ export function apply(ctx) {
 					res.end();
 					return;
 				}
-				// 另存一份到当前会话目录（客户端传 cwd + 时间戳文件名）；失败不影响插入
+				// 另存一份：只有客户端显式给了 saveDir 才会写（SAVE_TO_SESSION=true 时才给）
+				const sessionDir = resolveSessionDir(ctx, body.sessionId);
 				const savedPath = await saveToSession(shot.buffer, body.saveDir, body.fileName);
+				// 索引：只留附件库一份时，也能知道这张图属于哪个会话
+				const sha = sha256Hex(shot.buffer);
+				await appendShotIndex(sessionDir, {
+					at: new Date().toISOString(),
+					file: typeof body.fileName === "string" ? body.fileName : null,
+					sha256: sha,
+					bytes: shot.buffer.length,
+					width: shot.width,
+					height: shot.height,
+					sessionId: typeof body.sessionId === "string" ? body.sessionId : null,
+					title: resolveSessionTitle(ctx, body.sessionId) ?? null,
+					object: join(homedir(), ".dsh", "attachments", "v1", "objects", sha.slice(0, 2), sha),
+				});
 				const headers = {
 					"Content-Type": "image/png",
 					"Content-Length": String(shot.buffer.length),
