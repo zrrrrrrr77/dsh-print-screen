@@ -21,7 +21,7 @@ composer, bottom left:  [+]  [✂]  [workspace edits]  [Plan]
 - **Inserted into the composer.** The shot goes through the session's own attachment API, so the thumbnail appears under the input and is sent with the message on Enter. If that fails it falls back to a synthetic paste event, and finally to the clipboard with a `Ctrl+V` hint.
 - **Timestamped filenames.** Attachments are named `screenshot-2026-10-26_22-31-05.png` (local time, second precision), so several shots never collide.
 - **One copy, no duplication.** The image is stored once in the DSH attachment library (`~/.dsh/attachments`), named by its content hash; no copy is written into the workspace, and uploading the same image twice still stores only one object.
-- **Indexed per session.** After each shot the host appends `{time, filename, hash, size, session id/title, object path}` to `screenshots.json` in the session directory, which answers "which conversation does this image belong to". Failing to write it never affects the shot.
+- **Indexed per session.** After each shot the host appends `{time, filename, hash, size, session id/title, object path}` to `screenshots.json` in the session directory, which answers "which conversation does this image belong to". Failing to write it never affects the shot. Note that `object` is a path the plugin **derives** from the hash: if the shot never actually made it into a message (cancelled, insertion failed), that path does not exist, so do not use it to decide whether an image is still there.
 - **Optional extra backup.** Set `SAVE_TO_SESSION` to `true` in `client.js` to also write a same-named PNG into the session folder (costs double the disk per shot).
 
 ## Controls
@@ -120,17 +120,22 @@ The helper protocol has a self-test mode (sixth field `1`: no window, fixed 320x
 - The freeze overlay is an ordinary top-most window, so in theory another top-most window can cover a corner of it.
 - DSH is hidden while you capture; if the helper ever hangs (it is killed after a 5-minute timeout), DSH has to be restored by hand.
 - **Never delete images from the attachment library by hand.** Messages reference them by hash, so removing an object makes the sessions that reference it fail and their images disappear. Use the "Delete Conversation" plugin so images are removed together with the conversation.
-- **Case 1: deleting objects by hand empties past conversations.** Someone cleared disk space by deleting old screenshots under `~/.dsh/attachments/v1/objects/`. Every conversation that referenced them lost its images, and new messages started failing with a missing-attachment error. Objects are addressed by hash, so deleting one removes part of the message — and there is no recycle bin. Clean up through the "Delete Conversation" plugin instead.
+- **Case 1: delete an object from the library and that conversation is finished (measured).** Rename one object under `~/.dsh/attachments/v1/objects/` that a message references and the image in the history immediately turns into a "failed to load" placeholder. Send any further message and the model request retries five times before failing with `DeepSeek Messages transport failed` — **nothing in that error suggests a missing attachment**. Objects are addressed by hash, so deleting one removes part of the message, and there is no recycle bin; such a conversation cannot be repaired, only deleted (with the "Delete Conversation" plugin).
 - **Case 2: killing the helper mid-capture leaves DSH hidden.** During a capture DSH is hidden with `SW_HIDE` and restored as soon as the crop is done. If the helper process dies in between (Task Manager, antivirus, or the 5-minute timeout), nothing restores it: no window in the taskbar, which looks like a crashed app. End the `DeepSeek Harness` process in Task Manager and start it again — nothing is lost, no reinstall needed.
 
 ## Changelog
 
 | Version | Change |
 | --- | --- |
-| 0.4.7 | Docs only: this changelog, clearer install and storage notes. `index.js` / `client.js` / `helper.ps1` are identical to 0.4.6. |
+| 0.4.8 | Docs only: the measured failure mode of a deleted attachment object (including the exact error text), a note that `object` in `screenshots.json` is a derived path, and a feedback address. Code identical to 0.4.7. |
+| 0.4.7 | Docs: changelog, two real-world cases, clearer install and storage notes. Code identical to 0.4.6. |
 | 0.4.6 | Fixed the account email in the npm metadata; behaviour unchanged. |
 | 0.4.5 | Deprecated, use the latest release. |
 | 0.4.4 | First public release, deprecated. |
+
+## Feedback
+
+`102@qq.com` (add "rr210" in front of 102)
 
 ## License
 
