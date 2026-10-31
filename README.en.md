@@ -120,6 +120,17 @@ The helper protocol has a self-test mode (sixth field `1`: no window, fixed 320x
 - The freeze overlay is an ordinary top-most window, so in theory another top-most window can cover a corner of it.
 - DSH is hidden while you capture; if the helper ever hangs (it is killed after a 5-minute timeout), DSH has to be restored by hand.
 - **Never delete images from the attachment library by hand.** Messages reference them by hash, so removing an object makes the sessions that reference it fail and their images disappear. Use the "Delete Conversation" plugin so images are removed together with the conversation.
+- **Case 1: deleting objects by hand empties past conversations.** Someone cleared disk space by deleting old screenshots under `~/.dsh/attachments/v1/objects/`. Every conversation that referenced them lost its images, and new messages started failing with a missing-attachment error. Objects are addressed by hash, so deleting one removes part of the message — and there is no recycle bin. Clean up through the "Delete Conversation" plugin instead.
+- **Case 2: killing the helper mid-capture leaves DSH hidden.** During a capture DSH is hidden with `SW_HIDE` and restored as soon as the crop is done. If the helper process dies in between (Task Manager, antivirus, or the 5-minute timeout), nothing restores it: no window in the taskbar, which looks like a crashed app. End the `DeepSeek Harness` process in Task Manager and start it again — nothing is lost, no reinstall needed.
+
+## Changelog
+
+| Version | Change |
+| --- | --- |
+| 0.4.7 | Docs only: this changelog, clearer install and storage notes. `index.js` / `client.js` / `helper.ps1` are identical to 0.4.6. |
+| 0.4.6 | Fixed the account email in the npm metadata; behaviour unchanged. |
+| 0.4.5 | Deprecated, use the latest release. |
+| 0.4.4 | First public release, deprecated. |
 
 ## License
 
