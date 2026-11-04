@@ -21,7 +21,7 @@ composer, bottom left:  [+]  [✂]  [workspace edits]  [Plan]
 - **Inserted into the composer.** The shot goes through the session's own attachment API, so the thumbnail appears under the input and is sent with the message on Enter. If that fails it falls back to a synthetic paste event, and finally to the clipboard with a `Ctrl+V` hint.
 - **Timestamped filenames.** Attachments are named `screenshot-2026-10-26_22-31-05.png` (local time, second precision), so several shots never collide.
 - **One copy, no duplication.** The image is stored once in the DSH attachment library (`~/.dsh/attachments`), named by its content hash; no copy is written into the workspace, and uploading the same image twice still stores only one object.
-- **Indexed per session.** After each shot the host appends `{time, filename, hash, size, session id/title, object path}` to `screenshots.json` in the session directory, which answers "which conversation does this image belong to". Failing to write it never affects the shot. Note that `object` is a path the plugin **derives** from the hash: if the shot never actually made it into a message (cancelled, insertion failed), that path does not exist, so do not use it to decide whether an image is still there.
+- **Indexed per session, only after the image really reached a message.** A capture that was never inserted (cancelled, insertion failed, clipboard-only) is **not** recorded, so every entry in `screenshots.json` corresponds to an attachment you can actually see. Entries carry the time, filename, sha256, size, session id/title, `via` (`attached` = official attachment channel, `pasted` = synthetic paste event), and `object` — a path written only when the file really exists in the attachment library, otherwise `null`.
 - **Optional extra backup.** Set `SAVE_TO_SESSION` to `true` in `client.js` to also write a same-named PNG into the session folder (costs double the disk per shot).
 
 ## Controls
@@ -114,6 +114,8 @@ powershell -ExecutionPolicy Bypass -File test-hide.ps1     # hide/restore check 
 
 The helper protocol has a self-test mode (sixth field `1`: no window, fixed 320x200 crop); that is what `node test.mjs` uses.
 
+> **When editing the scripts**: every `.ps1` must be saved as **UTF-8 with BOM**. Windows PowerShell 5.1 decodes a BOM-less script with the system ANSI code page (GBK on a Chinese system), which turns the overlay hint "拖动框选区域 · Esc 取消" into mojibake.
+
 ## Known limitations
 
 - Windows only.
@@ -127,6 +129,7 @@ The helper protocol has a self-test mode (sixth field `1`: no window, fixed 320x
 
 | Version | Change |
 | --- | --- |
+| 0.4.9 | Six fixes: (1) the ledger is written by a client callback (`/record`) only after the image really landed in a message, so no more entries pointing at empty objects; (2) ledger writes are serialised, so rapid consecutive captures no longer drop entries; (3) `object` is written only when the attachment file actually exists; (4) `Ctrl+Alt+1` calls `preventDefault` first, so the key no longer leaks to the browser while the button is still mounting; (5) the shortcut now targets the session that owns the focused composer, so switching sessions from the sidebar no longer pastes into the previous one; (6) `helper.ps1` now restores windows on the self-test path too (it used to leave DSH as a transparent layer: invisible but still clickable), and a later exception no longer restores a second time and steals focus. Also: `workingDirectory` is resolved at runtime instead of being injected, and session-folder copies reject `..`-style filenames. |
 | 0.4.8 | Docs only: the measured failure mode of a deleted attachment object (including the exact error text), a note that `object` in `screenshots.json` is a derived path, and a feedback address. Code identical to 0.4.7. |
 | 0.4.7 | Docs: changelog, two real-world cases, clearer install and storage notes. Code identical to 0.4.6. |
 | 0.4.6 | Fixed the account email in the npm metadata; behaviour unchanged. |

@@ -6,6 +6,15 @@
 # 只用于本地排查（会闪一下全屏冻结窗口；真实 DSH 窗口也会被一并隐藏/还原）。
 $ErrorActionPreference = 'Stop'
 
+# ReadLine 本身没有超时：万一下面的拖框没被助手识别，脚本会一直挂在这里。
+# 包一层带上限的读，超时就报错退出，省得留下没人管的 helper 进程。
+function Read-LineTimed {
+  param($Proc, [int]$TimeoutMs = 15000)
+  $task = $Proc.StandardOutput.ReadLineAsync()
+  if (-not $task.Wait($TimeoutMs)) { throw "等待助手响应超时（${TimeoutMs}ms）" }
+  return $task.Result
+}
+
 Add-Type -TypeDefinition @"
 using System;
 using System.Text;
@@ -80,7 +89,7 @@ $psi.RedirectStandardInput = $true
 $psi.RedirectStandardOutput = $true
 $psi.CreateNoWindow = $true
 $helper = [System.Diagnostics.Process]::Start($psi)
-$null = $helper.StandardOutput.ReadLine()   # ready
+$null = Read-LineTimed -Proc $helper -TimeoutMs 20000   # ready
 
 $b64Out = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($OutPath))
 $helper.StandardInput.WriteLine("1|1|0|$b64Out")
@@ -113,7 +122,7 @@ if ($form -ne [IntPtr]::Zero) {
   Start-Sleep -Milliseconds 60
   [HideProbe4]::PostMessage($form, 0x0202, [IntPtr]::Zero, [HideProbe4]::Point(110, 80)) | Out-Null
 }
-$response = $helper.StandardOutput.ReadLine()
+$response = Read-LineTimed -Proc $helper -TimeoutMs 20000
 "helper response: $response"
 
 Start-Sleep -Milliseconds 1200

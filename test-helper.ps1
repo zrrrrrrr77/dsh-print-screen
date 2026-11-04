@@ -9,6 +9,14 @@
 # 只用于本地排查，不参与插件运行。
 $ErrorActionPreference = 'Stop'
 
+# 同上：ReadLine 没有超时，拖框没生效时脚本会永远挂住。
+function Read-LineTimed {
+  param($Proc, [int]$TimeoutMs = 15000)
+  $task = $Proc.StandardOutput.ReadLineAsync()
+  if (-not $task.Wait($TimeoutMs)) { throw "等待助手响应超时（${TimeoutMs}ms）" }
+  return $task.Result
+}
+
 Add-Type -TypeDefinition @"
 using System;
 using System.Text;
@@ -46,7 +54,7 @@ $psi.CreateNoWindow = $true
 
 $total = [Diagnostics.Stopwatch]::StartNew()
 $p = [System.Diagnostics.Process]::Start($psi)
-$ready = $p.StandardOutput.ReadLine()
+$ready = Read-LineTimed -Proc $p -TimeoutMs 20000
 "ready='$ready' 启动耗时: $($total.ElapsedMilliseconds)ms"
 
 if (Test-Path $OutPath) { Remove-Item $OutPath -Force }
@@ -70,7 +78,7 @@ if ($hwnd -ne [IntPtr]::Zero) {
   Start-Sleep -Milliseconds 80
   [Probe]::PostMessage($hwnd, 0x0202, [IntPtr]::Zero, [Probe]::Point(110, 80)) | Out-Null
 }
-$response = $p.StandardOutput.ReadLine()
+$response = Read-LineTimed -Proc $p -TimeoutMs 20000
 "第一次结果: $response  总耗时: $($first.ElapsedMilliseconds)ms"
 
 $secondPath = [IO.Path]::ChangeExtension($OutPath, ".2.png")
@@ -93,7 +101,7 @@ if ($hwnd2 -ne [IntPtr]::Zero) {
   Start-Sleep -Milliseconds 60
   [Probe]::PostMessage($hwnd2, 0x0202, [IntPtr]::Zero, [Probe]::Point(120, 90)) | Out-Null
 }
-$response2 = $p.StandardOutput.ReadLine()
+$response2 = Read-LineTimed -Proc $p -TimeoutMs 20000
 "第二次结果: $response2  总耗时: $($second.ElapsedMilliseconds)ms"
 
 Add-Type -AssemblyName System.Drawing

@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
 		const React = require('react')
 
 		const ENDPOINT = '/api/dsh-print-screen/capture'
+		const RECORD_ENDPOINT = '/api/dsh-print-screen/record'
 		const STYLE_ID = 'dsh-print-screen/style'
 
 		/** apply() 里的 ctx，组件里要用它去拿 conversation 服务。 */
@@ -123,6 +124,9 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 				}
 				const blob = await response.blob()
 				if (blob.size === 0) throw new Error('截图返回了空图片')
+				const sha = response.headers.get('X-Screenshot-Sha256') ?? undefined
+				const width = Number.parseInt(response.headers.get('X-Screenshot-Width') ?? '', 10)
+				const height = Number.parseInt(response.headers.get('X-Screenshot-Height') ?? '', 10)
 				const savedHeader = response.headers.get('X-Screenshot-Saved')
 				let savedPath
 				if (savedHeader !== null && savedHeader !== '') {
@@ -132,7 +136,7 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 						savedPath = savedHeader
 					}
 				}
-				return { blob, savedPath }
+				return { blob, savedPath, sha, width, height }
 			} catch (error) {
 				if (error?.name === 'AbortError') throw new Error('截图超时了，请重试')
 				throw error
@@ -259,6 +263,35 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 		/** 同一时间只允许一次截图（按钮和快捷键共用一个闸门，避免连按弹出多个冻结窗口）。 */
 		let capturing = false
 
+		/**
+		 * 图片真的进了消息之后，才让宿主写会话账本。
+		 * 插入失败、用户放弃、只剩剪贴板这几种情况都不记——账本里的一条就等于“这个对话里有这张图”。
+		 */
+		async function recordShot(result, file, sessionId, outcome) {
+			if (outcome !== 'attached' && outcome !== 'pasted') return
+			if (typeof result?.sha !== 'string' || !/^[0-9a-f]{64}$/.test(result.sha)) return
+			try {
+				await fetch(RECORD_ENDPOINT, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					// 记账是附带动作：宿主万一卡住，不能让界面一直等
+					signal: AbortSignal.timeout(5000),
+					body: JSON.stringify({
+						sessionId,
+						fileName: file.name,
+						sha256: result.sha,
+						bytes: file.size,
+						width: Number.isFinite(result.width) ? result.width : undefined,
+						height: Number.isFinite(result.height) ? result.height : undefined,
+						inserted: true,
+						via: outcome,
+					}),
+				})
+			} catch {
+				/* 记账失败不影响用户，也不回滚已经插入的图片 */
+			}
+		}
+
 		async function runCapture(sessionId, inputActions, hide) {
 			if (capturing) return
 			capturing = true
@@ -276,6 +309,7 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 				if (result === null) return
 				const file = new File([result.blob], fileName, { type: 'image/png' })
 				const outcome = await insertImage(file, sessionId, inputActions ?? mount?.inputActions)
+				await recordShot(result, file, sessionId, outcome)
 				const saved = result.savedPath === undefined ? '' : '（已存到会话文件夹）'
 				// 成功插入时不打扰用户，不弹提示；只有需要用户动手或失败才提示
 				if (outcome === 'clipboard') toast(`已复制到剪贴板，按 Ctrl+V 粘贴${saved}`)
@@ -378,21 +412,38 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 			return { hide: !event.shiftKey }
 		}
 
+		/**
+		 * 快捷键该落到哪个会话：先看当前焦点在哪个输入框里，
+		 * 焦点判断不出来才退回“最后点过的会话”。
+		 * 只用缓存的话，点侧栏切了会话再按 Ctrl+Alt+1 会把图插到上一个会话。
+		 */
+		function targetSessionId() {
+			const active = document.activeElement
+			if (active !== null && active !== undefined && active !== document.body) {
+				for (const [sessionId, mount] of mountPoints) {
+					if (mount.root !== undefined && mount.root !== null && mount.root.contains(active)) return sessionId
+				}
+			}
+			return activeSessionId
+		}
+
 		function installShortcut() {
 			window.addEventListener(
 				'keydown',
 				(event) => {
 					const intent = shortcutIntent(event)
 					if (intent === null) return
-					const sessionId = activeSessionId
+					const sessionId = targetSessionId()
 					if (typeof sessionId !== 'string') {
 						toast('先打开一个会话再截图', 'error')
 						return
 					}
-					const mount = mountPoints.get(sessionId)
-					if (mount === undefined) return
+					// 先吃掉这次按键：按钮可能还没挂载（刚切会话/还在渲染），
+					// 但 Ctrl+Alt+1 不该漏给浏览器或别的程序
 					event.preventDefault()
 					event.stopPropagation()
+					const mount = mountPoints.get(sessionId)
+					if (mount === undefined) return
 					runCapture(sessionId, mount.inputActions, intent.hide)
 				},
 				true,

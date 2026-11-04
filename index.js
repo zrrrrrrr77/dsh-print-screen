@@ -21,7 +21,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 
 export const name = "dsh-print-screen";
-export const inject = ["webServer", "workingDirectory"];
+export const inject = ["webServer"];
 
 const API_BASE = "/api/dsh-print-screen";
 const HELPER_SCRIPT = fileURLToPath(new URL("./helper.ps1", import.meta.url));
@@ -76,9 +76,12 @@ function pngSize(buffer) {
  * 目录不存在、不是目录、文件名不合法、写入失败都静默跳过——截图本身照常返回。
  * @returns {Promise<string | undefined>} 实际写出的绝对路径
  */
+/** 允许的会话目录副本文件名：必须以字母数字/下划线开头，不允许出现 `..`。 */
+const SAFE_PNG_NAME = /^[\w-][\w.\- ]{0,118}\.png$/iu;
+
 async function saveToSession(buffer, dir, fileName) {
 	if (typeof dir !== "string" || dir === "" || !isAbsolute(dir)) return undefined;
-	if (typeof fileName !== "string" || !/^[\w.\- ]{1,120}\.png$/iu.test(fileName)) return undefined;
+	if (typeof fileName !== "string" || !SAFE_PNG_NAME.test(fileName) || fileName.includes("..")) return undefined;
 	try {
 		const info = await stat(dir);
 		if (!info.isDirectory()) return undefined;
@@ -105,13 +108,23 @@ async function saveToSession(buffer, dir, fileName) {
  * 会话 header.cwd 是不可变的工作区根，只有投影反映“当前真正在用的目录”。
  * 取不到返回 undefined，由前端传来的 saveDir 兜底。
  */
+function workingDirectoryService(ctx) {
+	try {
+		const direct = ctx.get?.("workingDirectory");
+		if (direct !== undefined && direct !== null) return direct;
+	} catch {
+		/* 服务没注册就退回属性访问 */
+	}
+	return ctx.workingDirectory;
+}
+
 function resolveSessionDir(ctx, sessionId) {
 	if (typeof sessionId !== "string" || sessionId === "") return undefined;
 	try {
 		const sessions = ctx.get?.("sessions");
 		const session = sessions?.get?.(sessionId);
 		if (session === undefined || session === null) return undefined;
-		const dir = ctx.workingDirectory?.get?.(session);
+		const dir = workingDirectoryService(ctx)?.get?.(session);
 		return typeof dir === "string" && dir !== "" ? dir : undefined;
 	} catch {
 		return undefined;
@@ -140,8 +153,26 @@ function resolveSessionTitle(ctx, sessionId) {
  * 图片本体只存在于附件库（内容寻址、无扩展名），这个文件只记“谁拍的、什么时候、哈希是什么”，
  * 用来回答“这张图是哪个对话的”。任何失败都静默忽略，不影响截图本身。
  */
-async function appendShotIndex(dir, entry) {
-	if (typeof dir !== "string" || dir === "") return;
+/**
+ * 账本写入串行化：读-改-写不是原子的，两次截图几乎同时落盘时后写的会覆盖先写的，
+ * 丢一条记录。这里用一个进程内的 promise 队列把写入排成单行。
+ */
+let ledgerQueue = Promise.resolve();
+
+function appendShotIndex(dir, entry) {
+	if (typeof dir !== "string" || dir === "") return Promise.resolve();
+	const next = ledgerQueue.then(
+		() => writeLedgerEntry(dir, entry),
+		() => writeLedgerEntry(dir, entry),
+	);
+	ledgerQueue = next.then(
+		() => undefined,
+		() => undefined,
+	);
+	return next;
+}
+
+async function writeLedgerEntry(dir, entry) {
 	try {
 		const file = join(dir, "screenshots.json");
 		let list = [];
@@ -400,27 +431,17 @@ export function apply(ctx) {
 					return;
 				}
 				// 另存一份：只有客户端显式给了 saveDir 才会写（SAVE_TO_SESSION=true 时才给）
-				const sessionDir = resolveSessionDir(ctx, body.sessionId);
 				const savedPath = await saveToSession(shot.buffer, body.saveDir, body.fileName);
-				// 索引：只留附件库一份时，也能知道这张图属于哪个会话
+				// 记账不在这里做：截图成功 ≠ 图片进了对话。客户端插入成功后才会回调 /record，
+				// 否则插入失败/用户放弃时会留下一条指向不存在对象的假记录。
 				const sha = sha256Hex(shot.buffer);
-				await appendShotIndex(sessionDir, {
-					at: new Date().toISOString(),
-					file: typeof body.fileName === "string" ? body.fileName : null,
-					sha256: sha,
-					bytes: shot.buffer.length,
-					width: shot.width,
-					height: shot.height,
-					sessionId: typeof body.sessionId === "string" ? body.sessionId : null,
-					title: resolveSessionTitle(ctx, body.sessionId) ?? null,
-					object: join(homedir(), ".dsh", "attachments", "v1", "objects", sha.slice(0, 2), sha),
-				});
 				const headers = {
 					"Content-Type": "image/png",
 					"Content-Length": String(shot.buffer.length),
 					"Cache-Control": "no-store",
 					"X-Screenshot-Width": String(shot.width),
 					"X-Screenshot-Height": String(shot.height),
+					"X-Screenshot-Sha256": sha,
 				};
 				if (savedPath !== undefined) {
 					// 路径里可能有中文，HTTP 头只能是 latin-1，用百分号编码
@@ -439,5 +460,68 @@ export function apply(ctx) {
 		},
 	});
 
-	logger.info(`ready — routes POST ${API_BASE}/capture, GET ${API_BASE}/health`);
+	// 记账回调：客户端确认图片真的进了消息之后才写 screenshots.json。
+	// 这样账本里的每一条都对应一条能看见的附件，不会出现“记了但对象不存在”的假记录。
+	ctx.webServer.register({
+		kind: "exact",
+		path: `${API_BASE}/record`,
+		handler: async (req, res) => {
+			if (!isSameOrigin(req)) {
+				sendJson(res, 403, { ok: false, code: "cross-origin", message: "已拒绝跨站请求" });
+				return;
+			}
+			if (req.method !== "POST") {
+				sendJson(res, 405, { ok: false, code: "method", message: "请用 POST" });
+				return;
+			}
+			let body = {};
+			try {
+				body = await readJsonBody(req);
+			} catch (error) {
+				sendJson(res, 400, { ok: false, code: "bad-request", message: error.message });
+				return;
+			}
+
+			const sha =
+				typeof body.sha256 === "string" && /^[0-9a-f]{64}$/u.test(body.sha256) ? body.sha256 : undefined;
+			if (sha === undefined) {
+				sendJson(res, 400, { ok: false, code: "bad-request", message: "sha256 缺失或格式非法" });
+				return;
+			}
+			if (body.inserted !== true) {
+				// 没进消息就不记：账本只描述“这个对话里有哪些图”
+				sendJson(res, 200, { ok: true, recorded: false, reason: "not-inserted" });
+				return;
+			}
+
+			const sessionDir = resolveSessionDir(ctx, body.sessionId);
+			const objectPath = join(homedir(), ".dsh", "attachments", "v1", "objects", sha.slice(0, 2), sha);
+			const present = await stat(objectPath).then(
+				() => true,
+				() => false,
+			);
+			const entry = {
+				at: new Date().toISOString(),
+				file:
+					typeof body.fileName === "string" && SAFE_PNG_NAME.test(body.fileName) && !body.fileName.includes("..")
+						? body.fileName
+						: null,
+				sha256: sha,
+				bytes: Number.isFinite(body.bytes) ? body.bytes : null,
+				width: Number.isFinite(body.width) ? body.width : null,
+				height: Number.isFinite(body.height) ? body.height : null,
+				sessionId: typeof body.sessionId === "string" ? body.sessionId : null,
+				title: resolveSessionTitle(ctx, body.sessionId) ?? null,
+				// 附件库对象路径由哈希推算，但只有文件真的存在时才算事实
+				object: present ? objectPath : null,
+				objectPresent: present,
+				// attached = 走了官方附件通道（确定进了消息）；pasted = 合成的粘贴事件（大概率进了）
+				via: body.via === "attached" || body.via === "pasted" ? body.via : null,
+			};
+			await appendShotIndex(sessionDir, entry);
+			sendJson(res, 200, { ok: true, recorded: sessionDir !== undefined, objectPresent: present });
+		},
+	});
+
+	logger.info(`ready — routes POST ${API_BASE}/capture, POST ${API_BASE}/record, GET ${API_BASE}/health`);
 }

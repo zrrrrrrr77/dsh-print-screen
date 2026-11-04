@@ -1,4 +1,4 @@
-param()
+﻿param()
 
 # dsh-print-screen 常驻截图助手（唯一的截图实现）。
 #
@@ -490,6 +490,7 @@ function Invoke-Capture {
   }
 
   $result = @{ status = 'cancel'; hidden = $hidden; focus = $focus }
+  $windowsRestored = $false
 
   try {
     $captureWatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -507,6 +508,13 @@ function Invoke-Capture {
         $crop.Dispose()
       }
       if ($script:snap.saved) { $result.status = 'ok' }
+      # 自测模式走的也是同一套隐藏逻辑，不能提前 return 把 DSH 留成透明层：
+      # 窗口看不见却还能点到，用户会以为程序挂了。
+      if ($hidden.Count -gt 0) {
+        Restore-TargetWindows -Hidden $hidden -Focus $focus | Out-Null
+        $hidden.Clear()
+        $result.hidden = @()
+      }
       return $result
     }
 
@@ -548,6 +556,9 @@ function Invoke-Capture {
           Start-Sleep -Milliseconds 4
         }
         $result.hidden = @()
+        # 标记已还原：后面任何异常都不该再还原一次，否则会重复 SetWindowPos /
+        # SetForegroundWindow，把用户刚切过去的焦点抢回来。
+        $windowsRestored = $true
       } catch {
         Write-SnapLog ("restore error: " + $_.Exception.Message)
       }
@@ -577,14 +588,14 @@ function Invoke-Capture {
     return $result
   } catch {
     # 出错也要把窗口还原，避免 DSH 一直处于隐藏状态
-    if ($hidden.Count -gt 0) { Restore-TargetWindows -Hidden $hidden -Focus $focus }
+    if (-not $windowsRestored -and $hidden.Count -gt 0) { Restore-TargetWindows -Hidden $hidden -Focus $focus | Out-Null }
     throw
   }
 }
 
 $stdin = [Console]::In
 $stdout = [Console]::Out
-Write-SnapLog 'helper ready v0.4.4 (transparent hide, cleanup)'
+Write-SnapLog 'helper ready v0.4.9 (transparent hide, cleanup)'
 $stdout.WriteLine('ready')
 $stdout.Flush()
 
