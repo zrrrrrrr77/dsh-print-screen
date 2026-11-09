@@ -29,6 +29,7 @@ apply(ctx);
 const health = routes.get("/api/dsh-print-screen/health");
 const capture = routes.get("/api/dsh-print-screen/capture");
 const record = routes.get("/api/dsh-print-screen/record");
+const events = routes.get("/api/dsh-print-screen/events");
 assert.ok(health && capture && record, "routes registered");
 
 // 回归测试：所有 .ps1 必须是 UTF-8 带 BOM。
@@ -45,6 +46,25 @@ assert.ok(health && capture && record, "routes registered");
 	console.log("ok — every .ps1 is UTF-8 with BOM");
 }
 
+// 全局热键的推送通道：SSE 长连接 + 跨站/方法拒绝
+{
+	assert.ok(events, "/events 路由要注册（全局热键靠它推送）");
+	const stream = callHandler(events, { method: "GET" });
+	stream.run();
+	assert.equal(stream.state.status, 200, "GET /events 应该是 200");
+	assert.match(String(stream.state.headers["Content-Type"]), /^text\/event-stream/, "应该是 SSE");
+	assert.match(Buffer.concat(stream.state.chunks).toString("utf8"), /retry:/, "应先发一条 retry");
+
+	const cross = callHandler(events, { method: "GET", headers: { origin: "http://evil.example" } });
+	cross.run();
+	assert.equal(cross.state.status, 403, "跨站 GET 要被拒");
+
+	const wrongMethod = callHandler(events, { method: "POST" });
+	wrongMethod.run();
+	assert.equal(wrongMethod.state.status, 405, "/events 只收 GET");
+	console.log("ok — hotkey SSE route (stream + cross-origin + method)");
+}
+
 /** 造一个假的 req/res，跑一次 handler。传路由对象或函数都行。 */
 function callHandler(route, { body, method = "POST", headers = {} } = {}) {
 	const handler = typeof route === "function" ? route : route.handler;
@@ -57,6 +77,9 @@ function callHandler(route, { body, method = "POST", headers = {} } = {}) {
 		{
 			method,
 			headers: { "content-type": "application/json", host: "127.0.0.1:7395", ...headers },
+			on() {
+				return this;
+			},
 		},
 	);
 	const res = {
@@ -65,6 +88,13 @@ function callHandler(route, { body, method = "POST", headers = {} } = {}) {
 		writeHead(code, h) {
 			state.status = code;
 			state.headers = h ?? {};
+		},
+		write(chunk) {
+			if (chunk) chunks.push(Buffer.from(chunk));
+			return true;
+		},
+		on() {
+			return this;
 		},
 		end(chunk) {
 			this.writableEnded = true;

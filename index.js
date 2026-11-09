@@ -28,6 +28,22 @@ const HELPER_SCRIPT = fileURLToPath(new URL("./helper.ps1", import.meta.url));
 const HELPER_READY_TIMEOUT_MS = 10_000;
 const HELPER_REQUEST_TIMEOUT_MS = 300_000;
 
+/**
+ * 全局热键的推送通道：客户端用 EventSource 挂在 GET /events 上，
+ * 助手按下 OS 级热键后（DSH 可能没有焦点，keydown 收不到）由宿主转发。
+ */
+const hotkeySubscribers = new Set();
+
+function broadcastHotkey() {
+	for (const res of [...hotkeySubscribers]) {
+		try {
+			res.write("event: hotkey\ndata: {}\n\n");
+		} catch {
+			hotkeySubscribers.delete(res);
+		}
+	}
+}
+
 function sendJson(res, status, payload) {
 	if (res.writableEnded || res.destroyed) return;
 	const body = Buffer.from(JSON.stringify(payload), "utf8");
@@ -232,6 +248,12 @@ function startHelper() {
 			readyResolve(true);
 			return;
 		}
+		// 助手主动上报：用户按了全局热键（不是某次请求的应答）。
+		// 没有前端在听（DSH 窗口关了）就别往下走，否则会弹一个没人接收的冻结画面。
+		if (trimmed.startsWith("hotkey")) {
+			if (hotkeySubscribers.size > 0) broadcastHotkey();
+			return;
+		}
 		const split = trimmed.indexOf("|");
 		if (split <= 0) return;
 		const id = trimmed.slice(0, split);
@@ -378,6 +400,62 @@ export function apply(ctx) {
 	}
 
 	ctx.effect?.(() => () => stopHelper(), "dsh-print-screen helper");
+
+	ctx.effect?.(
+		() => () => {
+			for (const res of [...hotkeySubscribers]) {
+				try {
+					res.end();
+				} catch {
+					/* 连接已断 */
+				}
+			}
+			hotkeySubscribers.clear();
+		},
+		"dsh-print-screen hotkey",
+	);
+
+	// 全局热键推送：客户端用 EventSource 长连接挂在这里。
+	// DSH 窗口没有焦点时渲染层收不到 keydown，只能由常驻助手抢 OS 热键再推过来。
+	ctx.webServer.register({
+		kind: "exact",
+		path: `${API_BASE}/events`,
+		handler: (req, res) => {
+			if (!isSameOrigin(req)) {
+				sendJson(res, 403, { ok: false, code: "cross-origin", message: "已拒绝跨站请求" });
+				return;
+			}
+			if (req.method !== "GET") {
+				sendJson(res, 405, { ok: false, code: "method", message: "请用 GET" });
+				return;
+			}
+			res.writeHead(200, {
+				"Content-Type": "text/event-stream; charset=utf-8",
+				"Cache-Control": "no-store",
+				Connection: "keep-alive",
+				"X-Accel-Buffering": "no",
+			});
+			res.write("retry: 2000\n\n");
+			hotkeySubscribers.add(res);
+			// 心跳：空闲长连接容易被中间层掐掉
+			const keepAlive = setInterval(() => {
+				try {
+					res.write(": ping\n\n");
+				} catch {
+					hotkeySubscribers.delete(res);
+				}
+			}, 25_000);
+			keepAlive.unref?.();
+			const cleanup = () => {
+				clearInterval(keepAlive);
+				hotkeySubscribers.delete(res);
+			};
+			// 只在响应侧清理：req 的 "close" 在请求收完时就可能触发，
+			// 用它清理会把长连接刚建立就摘掉，热键推送全部丢失。
+			res.on("close", cleanup);
+			res.on("error", cleanup);
+		},
+	});
 
 	ctx.webServer.register({
 		kind: "exact",

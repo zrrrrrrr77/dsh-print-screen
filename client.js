@@ -22,6 +22,7 @@ window.__ModuleLoader__.load({
 
 		const ENDPOINT = '/api/dsh-print-screen/capture'
 		const RECORD_ENDPOINT = '/api/dsh-print-screen/record'
+		const EVENTS_ENDPOINT = '/api/dsh-print-screen/events'
 		const STYLE_ID = 'dsh-print-screen/style'
 
 		/** apply() 里的 ctx，组件里要用它去拿 conversation 服务。 */
@@ -450,6 +451,31 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 			)
 		}
 
+		/**
+		 * 全局热键：助手进程用 RegisterHotKey 抢的是 OS 级热键。
+		 * DSH 窗口没焦点时渲染层收不到 keydown（浏览器、行情软件在前面时按
+		 * Ctrl+Alt+1 完全没反应），所以改由宿主通过 SSE 把这一下推过来。
+		 * 热键注册失败（被别的程序占了）时这里永远收不到事件，快捷键退回
+		 * 上面那个 keydown 分支，行为跟以前一样。
+		 */
+		function installGlobalTrigger() {
+			if (typeof EventSource !== 'function') return
+			let source
+			try {
+				source = new EventSource(EVENTS_ENDPOINT)
+			} catch {
+				return
+			}
+			source.addEventListener('hotkey', () => {
+				// 同一台机器上只有一个助手能抢到 OS 热键（后来的注册会失败），
+				// 所以这里不用再做去重；DSH 最小化时也照常响应。
+				const sessionId = targetSessionId()
+				const mount = typeof sessionId === 'string' ? mountPoints.get(sessionId) : undefined
+				if (mount === undefined) return
+				runCapture(sessionId, mount.inputActions, true)
+			})
+		}
+
 		// ----------------------------------------------------------------- apply
 
 		const inject = ['slots']
@@ -458,6 +484,7 @@ div:has(> [data-slot="conversation.input.left"]):has(> button[aria-haspopup="lis
 			pluginCtx = ctx
 			installStyle()
 			installShortcut()
+			installGlobalTrigger()
 			installActivityTracking()
 
 			ctx.slots.inject('conversation.input.left', () => {

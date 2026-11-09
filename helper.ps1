@@ -40,6 +40,10 @@ public static class SnapDpi {
   [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int index, int value);
   [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint colorKey, byte alpha, uint flags);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+  [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool PeekMessage(IntPtr lpMsg, IntPtr hWnd, uint filterMin, uint filterMax, uint remove);
+  [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
   public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
   public struct POINT { public int X; public int Y; }
 }
@@ -111,6 +115,7 @@ $script:snap = @{
   saved = $false
   dragging = $false
   firstMove = $false
+  ready = $false
   origin = [System.Drawing.Point]::Empty
   rect = [System.Drawing.Rectangle]::Empty
   hidden = @()
@@ -191,6 +196,9 @@ function Ensure-Form {
 
   $form.Add_MouseDown({
     param($sender, $eventArgs)
+    # 冻结层刚盖上来、画面还在换（先 A 帧后 B 帧）时不接受拖框，
+    # 否则可能框到一帧正在被重写的位图。
+    if (-not $script:snap.ready) { return }
     if ($eventArgs.Button -ne [System.Windows.Forms.MouseButtons]::Left) {
       Close-SnapForm
       return
@@ -223,6 +231,7 @@ function Ensure-Form {
 
   $form.Add_MouseUp({
     param($sender, $eventArgs)
+    if (-not $script:snap.ready) { return }
     if (-not $script:snap.dragging) { return }
     $script:snap.dragging = $false
     $rect = $script:snap.rect
@@ -316,6 +325,7 @@ function Get-TargetWindows {
     return $true
   }
   [SnapDpi]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+  Write-SnapLog ("target {0}: pids={1} matched={2}" -f $OnlyProcess, $pids.Count, $Into.Count)
 }
 
 function Hide-TargetWindows {
@@ -350,8 +360,21 @@ function Hide-TargetWindows {
   }
 }
 
+# 冻结层「对用户可见、对截图不可见」：WDA_EXCLUDEFROMCAPTURE（Win10 2004+）。
+# 有了它才能先把冻结层盖到屏幕上、再隐藏 DSH —— 用户看不到 DSH 消失那一下。
+function Enable-CaptureExclusion {
+  param($Form)
+  try {
+    if ([Environment]::OSVersion.Version.Build -lt 19041) { return $false }
+    $null = $Form.Handle    # 取一次句柄，确保窗口对象已经建出来
+    return [SnapDpi]::SetWindowDisplayAffinity($Form.Handle, 0x11)
+  } catch {
+    return $false
+  }
+}
+
 function Restore-TargetWindows {
-  param($Hidden, $Focus)
+  param($Hidden, $Focus, [switch]$RestoreFocus)
   $focusHwnd = [IntPtr]::Zero
   if ($null -ne $Focus) {
     try { $focusHwnd = [IntPtr]$Focus } catch { $focusHwnd = [IntPtr]::Zero }
@@ -376,7 +399,7 @@ function Restore-TargetWindows {
   if ($focusHwnd -eq [IntPtr]::Zero -and $Hidden.Count -gt 0) {
     try { $focusHwnd = [IntPtr]$Hidden[0].hwnd } catch { $focusHwnd = [IntPtr]::Zero }
   }
-  if ($focusHwnd -ne [IntPtr]::Zero) {
+  if ($RestoreFocus -and $focusHwnd -ne [IntPtr]::Zero) {
     # 还原后把主窗口抢回前台：不这样做窗口会留在别的窗口后面，
     # 表现就是「任务栏有图标、点一下才出来」
     $foreground = [SnapDpi]::GetForegroundWindow()
@@ -439,6 +462,41 @@ function Copy-ScreenToBuffer {
   return $bounds
 }
 
+# 冻结层已经盖住屏幕之后，只需要把「被隐藏窗口占的那几块」重抓一遍，
+# 代替整屏重抓（整屏 7680×2150 要 70~145ms，一块窗口通常 3~10ms）。
+# 返回重抓了几块，并把对应区域标记为需要重绘。
+function Update-CaptureRects {
+  param($Hidden, $Bounds)
+  $patched = 0
+  if ($null -eq $script:snap.form -or $script:snap.memDc -eq [IntPtr]::Zero) { return 0 }
+  foreach ($entry in $Hidden) {
+    try {
+      $rect = [SnapDpi+RECT]::new()
+      [SnapDpi]::GetWindowRect([IntPtr]$entry.hwnd, [ref]$rect) | Out-Null
+      $w = [int]($rect.Right - $rect.Left)
+      $h = [int]($rect.Bottom - $rect.Top)
+      if ($w -le 0 -or $h -le 0) { continue }
+      # 外扩 24px：DWM 窗口阴影画在窗口矩形外面，不一起重抓会留下一圈鬼影
+      $pad = 24
+      $cl = [Math]::Max([int]$rect.Left - $pad, $Bounds.Left)
+      $ct = [Math]::Max([int]$rect.Top - $pad, $Bounds.Top)
+      $cr = [Math]::Min([int]$rect.Right + $pad, $Bounds.Right)
+      $cb = [Math]::Min([int]$rect.Bottom + $pad, $Bounds.Bottom)
+      $cw = $cr - $cl
+      $ch = $cb - $ct
+      if ($cw -le 0 -or $ch -le 0) { continue }
+      $ok = [SnapBlit]::BitBlt(
+        $script:snap.memDc, ($cl - $Bounds.Left), ($ct - $Bounds.Top), $cw, $ch,
+        $script:snap.screenDc, $cl, $ct, [SnapBlit]::SRCCOPY
+      )
+      if ($ok) {
+        $patched++
+        $script:snap.form.Invalidate((New-Object System.Drawing.Rectangle(($cl - $Bounds.Left), ($ct - $Bounds.Top), $cw, $ch)))
+      }
+    } catch { }
+  }
+  return $patched
+}
 function Invoke-Capture {
   param(
     [Parameter(Mandatory = $true)][string]$OutPath,
@@ -452,10 +510,52 @@ function Invoke-Capture {
   $script:snap.outPath = $OutPath
   $script:snap.dragging = $false
   $script:snap.firstMove = $false
+  $script:snap.ready = $false
   $script:snap.rect = [System.Drawing.Rectangle]::Empty
 
   $hidden = New-Object System.Collections.ArrayList
   $focus = [IntPtr]::Zero
+  # 隐藏之前谁在前台。只有 DSH 本来就是前台窗口时，还原后才把它提回前台；
+  # 从浏览器/行情软件按全局热键截图时抢焦点会把用户从正在看的窗口里拽出来。
+  $foregroundBefore = [SnapDpi]::GetForegroundWindow()
+  $restoreFocus = $false
+
+  # 先抓一帧（这时 DSH 还看得见），把冻结层盖上去。冻结层对截图不可见
+  # （WDA_EXCLUDEFROMCAPTURE），所以接下来可以放心隐藏 DSH、再重抓一帧干净的。
+  # 原来是「先隐藏 → 等 60ms → 抓屏 70ms → 冻结层首帧 30ms」，这一百多毫秒里
+  # DSH 的位置会露出后面的桌面，看起来就是 DSH 闪了一下。
+  $form = Ensure-Form
+  $preCovered = $false
+  if ($Hide -and -not $SelfTest -and (Enable-CaptureExclusion -Form $form)) {
+    try {
+    $coverWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $coverBounds = Copy-ScreenToBuffer
+    $coverCaptureMs = $coverWatch.ElapsedMilliseconds
+    $form.Bounds = New-Object System.Drawing.Rectangle($coverBounds.Left, $coverBounds.Top, $coverBounds.Width, $coverBounds.Height)
+    $script:snap.painted = $false
+    $script:snap.shownAt = Get-Date
+    $form.Show()
+    $form.Activate()
+    # 立刻同步画一帧：窗口先合成出黑底、再等 40ms 才画，就会闪一下黑。
+    # Refresh() 把 Paint 拉到这次合成之前，窗口一出现就已经是冻结画面。
+    $form.Refresh()
+    [System.Windows.Forms.Application]::DoEvents()
+    $coverDeadline = [DateTime]::Now.AddMilliseconds(400)
+    while (-not $script:snap.painted -and [DateTime]::Now -lt $coverDeadline) {
+      [System.Windows.Forms.Application]::DoEvents()
+      Start-Sleep -Milliseconds 2
+    }
+    $coverWatch.Stop()
+    Write-SnapLog ("cover {0}ms (frameA={1}ms) painted={2}" -f $coverWatch.ElapsedMilliseconds, $coverCaptureMs, $script:snap.painted)
+    $preCovered = $true
+    } catch {
+      # 覆盖阶段出任何问题都不能把屏幕留在冻结层上
+      Write-SnapLog ("cover failed: " + $_.Exception.Message)
+      try { $form.Hide() } catch { }
+      $preCovered = $false
+    }
+  }
+
   if ($Hide) {
     $targets = New-Object System.Collections.ArrayList
     Get-TargetWindows -OnlyProcess $OnlyProcess -Into $targets
@@ -475,6 +575,10 @@ function Invoke-Capture {
       if ($focus -eq [IntPtr]::Zero) {
         try { $focus = [IntPtr]$hidden[0].hwnd } catch { $focus = [IntPtr]::Zero }
       }
+      # 前台窗口是这批被隐藏的窗口之一（通常是主窗口，也可能是弹出层）才还焦点
+      foreach ($entry in $hidden) {
+        try { if ([IntPtr]$entry.hwnd -eq $foregroundBefore) { $restoreFocus = $true } } catch { }
+      }
     }
     if ($hidden.Count -gt 0) {
       # 只记标题长度，不记标题本身：标题常含会话名、文件名、网页标题，属于隐私
@@ -483,6 +587,11 @@ function Invoke-Capture {
       # 过渡动画关不掉时退回长一点的等待，避免抓到渐隐残影
       $settle = 60
       if (@($hidden | Where-Object { $_.fallback }).Count -gt 0) { $settle = 200 }
+      if ($preCovered -and $settle -lt 200) {
+        # 屏幕已经被冻结层盖住，这里只为等 DWM 把「DSH 已隐藏」合成出来
+        try { [SnapDpi]::DwmFlush() | Out-Null } catch { }
+        $settle = 8
+      }
       Start-Sleep -Milliseconds $settle
     } elseif ($DelayMs -gt 0) { Start-Sleep -Milliseconds $DelayMs }
   } elseif ($DelayMs -gt 0) {
@@ -494,9 +603,16 @@ function Invoke-Capture {
 
   try {
     $captureWatch = [System.Diagnostics.Stopwatch]::StartNew()
-    $bounds = Copy-ScreenToBuffer
-    $captureWatch.Stop()
-    Write-SnapLog ("capture {0}ms" -f $captureWatch.ElapsedMilliseconds)
+    if ($preCovered) {
+      # 冻结层已经盖住屏幕，只补抓 DSH 占的那几块，不再整屏重抓
+      $patched = Update-CaptureRects -Hidden $hidden -Bounds $coverBounds
+      $captureWatch.Stop()
+      Write-SnapLog ("patch {0} rects {1}ms" -f $patched, $captureWatch.ElapsedMilliseconds)
+    } else {
+      $bounds = Copy-ScreenToBuffer
+      $captureWatch.Stop()
+      Write-SnapLog ("capture {0}ms" -f $captureWatch.ElapsedMilliseconds)
+    }
 
     if ($SelfTest) {
       $cropRect = New-Object System.Drawing.Rectangle(10, 10, 320, 200)
@@ -511,7 +627,7 @@ function Invoke-Capture {
       # 自测模式走的也是同一套隐藏逻辑，不能提前 return 把 DSH 留成透明层：
       # 窗口看不见却还能点到，用户会以为程序挂了。
       if ($hidden.Count -gt 0) {
-        Restore-TargetWindows -Hidden $hidden -Focus $focus | Out-Null
+        Restore-TargetWindows -Hidden $hidden -Focus $focus -RestoreFocus:$restoreFocus | Out-Null
         $hidden.Clear()
         $result.hidden = @()
       }
@@ -519,26 +635,36 @@ function Invoke-Capture {
     }
 
     $form = Ensure-Form
-    $form.Bounds = New-Object System.Drawing.Rectangle($bounds.Left, $bounds.Top, $bounds.Width, $bounds.Height)
-    $script:snap.painted = $false
-    $script:snap.shownAt = Get-Date
-    $form.Show()
-    $form.Activate()
-    [System.Windows.Forms.Application]::DoEvents()
+    if ($preCovered) {
+      # 只重绘补抓过的那几块（Invalidate 已经在 Update-CaptureRects 里做过）
+      $script:snap.painted = ($patched -le 0)
+      $script:snap.shownAt = Get-Date
+      [System.Windows.Forms.Application]::DoEvents()
+    } else {
+      $form.Bounds = New-Object System.Drawing.Rectangle($bounds.Left, $bounds.Top, $bounds.Width, $bounds.Height)
+      $script:snap.painted = $false
+      $script:snap.shownAt = Get-Date
+      $form.Show()
+      $form.Activate()
+      [System.Windows.Forms.Application]::DoEvents()
+    }
 
     # 等冻结画面真正画出来再还原 DSH，否则会看到 DSH 闪一下
     $paintDeadline = [DateTime]::Now.AddMilliseconds(500)
-    while (-not $script:snap.painted -and [DateTime]::Now -lt $paintDeadline) {
+    # 用户按 Esc 提前关掉冻结层时别再等它重绘（否则白等 500ms）
+    while (-not $script:snap.painted -and $form.Visible -and [DateTime]::Now -lt $paintDeadline) {
       [System.Windows.Forms.Application]::DoEvents()
       Start-Sleep -Milliseconds 2
     }
+    # 画面稳定了才接受拖框
+    $script:snap.ready = $true
 
     # 冻结画面已经盖住屏幕，这时再还原 DSH 就看不到它闪一下。
     # 还原后把焦点交回冻结窗口：这样“上一个前台窗口”是 DSH，
     # 冻结窗口关闭时系统会把焦点自然还给 DSH，不需要事后抢焦点。
     if ($hidden.Count -gt 0) {
       try {
-        $restored = Restore-TargetWindows -Hidden $hidden -Focus $focus
+        $restored = Restore-TargetWindows -Hidden $hidden -Focus $focus -RestoreFocus:$restoreFocus
         Write-SnapLog ("restore windows={0} focus={1}" -f $restored, $focus)
         # 趁冻结画面还盖着屏幕，强制 DSH 立刻重绘一遍：
         # Electron 窗口重新显示后第一帧常常是白的，不在这里画掉，画面一关就是白闪。
@@ -588,50 +714,122 @@ function Invoke-Capture {
     return $result
   } catch {
     # 出错也要把窗口还原，避免 DSH 一直处于隐藏状态
-    if (-not $windowsRestored -and $hidden.Count -gt 0) { Restore-TargetWindows -Hidden $hidden -Focus $focus | Out-Null }
+    if (-not $windowsRestored -and $hidden.Count -gt 0) { Restore-TargetWindows -Hidden $hidden -Focus $focus -RestoreFocus:$restoreFocus | Out-Null }
+    # 冻结层也要收起来：主循环平时不跑 DoEvents，窗口留在屏幕上会连 Esc 都收不到
+    try { Close-SnapForm } catch { }
     throw
   }
 }
 
-$stdin = [Console]::In
+$stdin = [Console]::OpenStandardInput()
 $stdout = [Console]::Out
-Write-SnapLog 'helper ready v0.4.9 (transparent hide, cleanup)'
+
+# 预热：冻结层第一次 Show + Paint 要 ~200ms（WinForms/GDI 一次性初始化）。
+# 现在冻结层是先盖屏幕再抓屏，这 200ms 就是一片全黑，所以必须在启动时
+# 在屏幕外把它做掉；顺便把位图缓冲也分配好。
+try {
+  $null = Copy-ScreenToBuffer
+  $warm = Ensure-Form
+  $warm.Bounds = New-Object System.Drawing.Rectangle(-32000, -32000, 800, 600)
+  $script:snap.shownAt = Get-Date
+  $script:snap.painted = $false
+  $warm.Show()
+  for ($i = 0; $i -lt 30; $i++) {
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 5
+  }
+  $warm.Hide()
+  [System.Windows.Forms.Application]::DoEvents()
+  Write-SnapLog ("warm-up done painted={0}" -f $script:snap.painted)
+} catch {
+  Write-SnapLog ('warm-up failed: ' + $_.Exception.Message)
+  # 预热失败也要把窗口收起来，别在屏幕外留一个黑窗
+  try { Ensure-Form | ForEach-Object { $_.Hide() } } catch { }
+}
+
+# 全局热键：注册在本线程的消息队列上（hWnd = 0），主循环用 PeekMessage 取
+# WM_HOTKEY，不需要窗口过程。这样 DSH 没有焦点时（用户在看浏览器、行情软件）
+# 快捷键照样能触发截图——渲染层的 keydown 只能在自己窗口有焦点时收到。
+# MOD_ALT(1) | MOD_CONTROL(2) | MOD_NOREPEAT(0x4000)，VK '1' = 0x31
+$hotkeyRegistered = $false
+try {
+  $hotkeyRegistered = [SnapDpi]::RegisterHotKey([IntPtr]::Zero, 1, 0x4003, 0x31)
+} catch {
+  $hotkeyRegistered = $false
+}
+Write-SnapLog ("helper ready v0.4.12 (cover-first, global hotkey={0})" -f $hotkeyRegistered)
 $stdout.WriteLine('ready')
 $stdout.Flush()
 
-while ($true) {
-  $line = $stdin.ReadLine()
-  if ($null -eq $line) { break }
-  $line = $line.Trim()
-  if ($line -eq '') { continue }
-  if ($line -eq 'exit') { break }
+$msgBuffer = [System.Runtime.InteropServices.Marshal]::AllocHGlobal(64)
+$readBuffer = New-Object byte[] 8192
+$carry = ''
+$pendingRead = $stdin.ReadAsync($readBuffer, 0, $readBuffer.Length)
+$running = $true
 
-  $parts = $line.Split('|')
-  if ($parts.Length -lt 4) { continue }
-  $id = $parts[0]
-  try {
-    $hide = $parts[1] -eq '1'
-    $delay = [int]$parts[2]
-    $outPath = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($parts[3]))
-    $processName = 'DeepSeek Harness'
-    if ($parts.Length -ge 5 -and $parts[4] -ne '') {
-      $processName = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($parts[4]))
-    }
-    $selfTest = $parts.Length -ge 6 -and $parts[5] -eq '1'
-    $result = Invoke-Capture -OutPath $outPath -Hide $hide -DelayMs $delay -OnlyProcess $processName -SelfTest $selfTest
-    Write-SnapLog ("request status={0} hide={1}" -f $result.status, $hide)
-    # 窗口在抓屏后就已经还原并切回前台了；这里只记录一下，不做任何抢占，
-    # 以免影响用户之后正常切换到别的窗口。
-    $stdout.WriteLine("$id|$($result.status)")
-    $stdout.Flush()
-    if ($result.focus -ne [IntPtr]::Zero) {
-      $foreground = Get-ForegroundTitle
-      Write-SnapLog ("after close fg len={0}" -f ([string]$foreground).Length)
-    }
-  } catch {
-    $message = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($_.Exception.Message))
-    Write-SnapLog ("request error: " + $_.Exception.Message)
-    $stdout.WriteLine("$id|error|$message")
-  }
-  $stdout.Flush()
+# 取走队列里所有 WM_HOTKEY（PM_REMOVE = 1），返回取到几次
+function Take-Hotkey {
+  $count = 0
+  while ([SnapDpi]::PeekMessage($script:msgBuffer, [IntPtr]::Zero, 0x0312, 0x0312, 1)) { $count++ }
+  return $count
 }
+
+while ($running) {
+  if ((Take-Hotkey) -gt 0) {
+    Write-SnapLog 'hotkey triggered'
+    $stdout.WriteLine('hotkey|1')
+    $stdout.Flush()
+  }
+
+  if (-not $pendingRead.IsCompleted) {
+    Start-Sleep -Milliseconds 20
+    continue
+  }
+
+  $read = $pendingRead.GetAwaiter().GetResult()
+  if ($read -le 0) { break }
+  $carry += [System.Text.Encoding]::ASCII.GetString($readBuffer, 0, $read)
+  $pendingRead = $stdin.ReadAsync($readBuffer, 0, $readBuffer.Length)
+
+  while ($running) {
+    $index = $carry.IndexOf("`n")
+    if ($index -lt 0) { break }
+    $line = $carry.Substring(0, $index).Trim()
+    $carry = $carry.Substring($index + 1)
+    if ($line -eq '') { continue }
+    if ($line -eq 'exit') { $running = $false; break }
+
+    $parts = $line.Split('|')
+    if ($parts.Length -lt 4) { continue }
+    $id = $parts[0]
+    try {
+      $hide = $parts[1] -eq '1'
+      $delay = [int]$parts[2]
+      $outPath = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($parts[3]))
+      $processName = 'DeepSeek Harness'
+      if ($parts.Length -ge 5 -and $parts[4] -ne '') {
+        $processName = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($parts[4]))
+      }
+      $selfTest = $parts.Length -ge 6 -and $parts[5] -eq '1'
+      $result = Invoke-Capture -OutPath $outPath -Hide $hide -DelayMs $delay -OnlyProcess $processName -SelfTest $selfTest
+      Write-SnapLog ("request status={0} hide={1}" -f $result.status, $hide)
+      # 窗口在抓屏后就已经还原了；这里只记录一下，不做任何抢占，
+      # 以免影响用户之后正常切换到别的窗口。
+      $stdout.WriteLine("$id|$($result.status)")
+      $stdout.Flush()
+      if ($result.focus -ne [IntPtr]::Zero) {
+        $foreground = Get-ForegroundTitle
+        Write-SnapLog ("after close fg len={0}" -f ([string]$foreground).Length)
+      }
+    } catch {
+      $message = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($_.Exception.Message))
+      Write-SnapLog ("request error: " + $_.Exception.Message)
+      $stdout.WriteLine("$id|error|$message")
+    }
+    $stdout.Flush()
+    # 抓屏期间按下的热键不算数：清掉，避免截完立刻又弹一次
+    Take-Hotkey | Out-Null
+  }
+}
+
+try { [SnapDpi]::UnregisterHotKey([IntPtr]::Zero, 1) | Out-Null } catch { }

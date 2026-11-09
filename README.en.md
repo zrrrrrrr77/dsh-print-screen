@@ -16,8 +16,9 @@ composer, bottom left:  [+]  [✂]  [workspace edits]  [Plan]
 
 - **One scissors button.** Same as any other composer button: transparent background, icon only, no extra width.
 - **Freeze first, then drag.** The entire virtual desktop (all monitors) is frozen, each screen keeping its original position and pixel size; releasing the mouse crops it and inserts the result.
-- **DSH hidden by default.** The DSH window is hidden before the shot and restored right after it (maximized state included), so windows it was covering can be captured.
+- **DSH hidden by default.** The current frame is frozen onto an overlay first, then the DSH window is hidden and the screen is captured again, then DSH is restored right away (maximized state included). Windows DSH was covering end up in the shot, and **you never see DSH vanish** — the overlay is marked `WDA_EXCLUDEFROMCAPTURE`, so it is visible to you but invisible to the capture.
 - **Two ways to keep it visible.** Hold `Shift` while clicking, or press `Ctrl+Shift+Alt+1`.
+- **The shortcut works from any window.** The resident helper registers `Ctrl+Alt+1` with `RegisterHotKey`, so a renderer-level `keydown` is no longer required and you do not have to click DSH first.
 - **Inserted into the composer.** The shot goes through the session's own attachment API, so the thumbnail appears under the input and is sent with the message on Enter. If that fails it falls back to a synthetic paste event, and finally to the clipboard with a `Ctrl+V` hint.
 - **Timestamped filenames.** Attachments are named `screenshot-2026-10-26_22-31-05.png` (local time, second precision), so several shots never collide.
 - **One copy, no duplication.** The image is stored once in the DSH attachment library (`~/.dsh/attachments`), named by its content hash; no copy is written into the workspace, and uploading the same image twice still stores only one object.
@@ -30,7 +31,7 @@ composer, bottom left:  [+]  [✂]  [workspace edits]  [Plan]
 |---|---|
 | Click the scissors | Capture, hiding the DSH window first |
 | `Shift` + click | Capture without hiding DSH (it can be in the shot) |
-| `Ctrl+Alt+1` | Same as a click: capture with DSH hidden |
+| `Ctrl+Alt+1` | Same as a click: capture with DSH hidden. **Works system-wide**, even when DSH has no focus (browser or another app in front) |
 | `Ctrl+Shift+Alt+1` | Capture with DSH visible |
 | Drag a rectangle, release | Crop, insert into the composer, and append a line to `screenshots.json` (DSH is restored as soon as the crop returns) |
 | `Esc` / right-click | Cancel |
@@ -56,7 +57,7 @@ If the helper cannot start or dies mid-request, the host restarts it and retries
 
 | | |
 |---|---|
-| DSH | `>= 0.2.1-rc.3` (`engines.dsh`) |
+| DSH | `>= 0.2.1-rc.3` (`engines.dsh`). Tested on `0.2.1-rc.5` and `0.2.2-rc.1`. |
 | OS | **Windows only** (10/11, using the built-in Windows PowerShell 5.1 and System.Drawing/WinForms) |
 | Other | No native Node modules, no external service, no API key |
 
@@ -119,6 +120,8 @@ The helper protocol has a self-test mode (sixth field `1`: no window, fixed 320x
 ## Known limitations
 
 - Windows only.
+- **Making the overlay invisible to the capture relies on `WDA_EXCLUDEFROMCAPTURE` (Windows 10 2004+)**: on older builds the plugin falls back to the old hide-then-capture order (you will see DSH disappear). On rare GPU drivers the API can report success yet not take effect, in which case the re-captured rectangle shows the overlay itself — please report that.
+- **While DSH runs, `Ctrl+Alt+1` is reserved system-wide** (`RegisterHotKey` semantics). Other apps cannot claim that chord; if another app already holds it, registration fails and the shortcut falls back to "only while DSH has focus".
 - The freeze overlay is an ordinary top-most window, so in theory another top-most window can cover a corner of it.
 - DSH is hidden while you capture; if the helper ever hangs (it is killed after a 5-minute timeout), DSH has to be restored by hand.
 - **Never delete images from the attachment library by hand.** Messages reference them by hash, so removing an object makes the sessions that reference it fail and their images disappear. Use the "Delete Conversation" plugin so images are removed together with the conversation.
@@ -129,6 +132,8 @@ The helper protocol has a self-test mode (sixth field `1`: no window, fixed 320x
 
 | Version | Change |
 | --- | --- |
+| 0.4.12 | Fixed the "DSH flickers on every capture" report: the old flow hid DSH first and only then captured, leaving roughly 160 ms (60 ms settle + 70 ms capture + 30 ms first frame) where the area DSH occupied showed the desktop behind it. It now works in two passes: the current frame is painted onto the freeze overlay (covering the screen), the overlay is marked `WDA_EXCLUDEFROMCAPTURE` (**visible to you, invisible to BitBlt**), DSH is then hidden and only **the rectangles it occupied** are re-captured (no second full-screen grab), with `DwmFlush` replacing the fixed 60 ms wait; the click-to-DSH-gone time is now about 200 ms (was about 330 ms). The overlay repaints in place — you only see the screen freeze, not DSH disappearing. The overlay and bitmap buffer are warmed up at startup so the first capture does not need an extra black frame. Code is otherwise identical to 0.4.11. |
+| 0.4.11 | The shortcut is now **global**: the resident helper claims the system-wide `Ctrl+Alt+1` with `RegisterHotKey`, its main loop polls `PeekMessage` while reading stdin asynchronously, and the press is pushed to the renderer over the new `GET /api/dsh-print-screen/events` (SSE). Previously the renderer-level `keydown` only fired while the DSH window had focus, so clicking the browser made the shortcut dead. Also: windows are brought back to the foreground only when DSH was the foreground window before the shot, so triggering from another app no longer pulls you out of what you were looking at. The `Shift` variant (capture without hiding DSH) still goes through the renderer and needs DSH focus. |
 | 0.4.10 | Packaging only: `shot-freeze.png` is now listed in `files[]`. The 0.4.9 tarball contained 9 files while `screenshots.json` listed two images, so consumers of that manifest could not resolve the second preview. Code identical to 0.4.9. |
 | 0.4.9 | Six fixes: (1) the ledger is written by a client callback (`/record`) only after the image really landed in a message, so no more entries pointing at empty objects; (2) ledger writes are serialised, so rapid consecutive captures no longer drop entries; (3) `object` is written only when the attachment file actually exists; (4) `Ctrl+Alt+1` calls `preventDefault` first, so the key no longer leaks to the browser while the button is still mounting; (5) the shortcut now targets the session that owns the focused composer, so switching sessions from the sidebar no longer pastes into the previous one; (6) `helper.ps1` now restores windows on the self-test path too (it used to leave DSH as a transparent layer: invisible but still clickable), and a later exception no longer restores a second time and steals focus. Also: `workingDirectory` is resolved at runtime instead of being injected, and session-folder copies reject `..`-style filenames. |
 | 0.4.8 | Docs only: the measured failure mode of a deleted attachment object (including the exact error text), a note that `object` in `screenshots.json` is a derived path, and a feedback address. Code identical to 0.4.7. |
